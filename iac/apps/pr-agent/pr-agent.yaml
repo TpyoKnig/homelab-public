@@ -1,0 +1,138 @@
+# PR-Agent — AI review on every Forgejo PR. See docs/10-pr-agent.md.
+#
+# Raw manifests, not a chart: upstream ships no Helm chart, so the Argo
+# Application for this one is single-source `path:` rather than the two-source
+# chart+values pattern used everywhere else in this repo.
+#
+# Nothing here is reachable from the internet by design — no Ingress, no DNS
+# record, no TLS. Forgejo delivers webhooks to the LoadBalancer IP over the LAN
+# and authenticates with a sha256 HMAC.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pr-agent
+  labels:
+    # The image would run as root given the chance; restricted is what stops it.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pr-agent
+  namespace: pr-agent
+spec:
+  # One replica on purpose. Reviews are idempotent background tasks, so a
+  # restart loses at most one in-flight review — not worth the coordination.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: { app: pr-agent }
+  template:
+    metadata:
+      labels: { app: pr-agent }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: pr-agent
+          # The -gitea_app target is the FastAPI webhook receiver. The plain tag
+          # is the CLI and will start, serve nothing, and look healthy.
+          # Digest-pin it: the tag is mutable upstream.
+          image: pragent/pr-agent:0.42.0-gitea_app@sha256:<DIGEST>
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false      # writes scratch state under /tmp
+            capabilities: { drop: [ALL] }
+          env:
+            # ── Forgejo (Gitea API) ──────────────────────────────────────────
+            # LAN address, not the public hostname: this traffic never leaves
+            # the house and never touches the Cloudflare tunnel.
+            - name: CONFIG__GIT_PROVIDER
+              value: gitea
+            - name: GITEA__URL
+              value: http://192.168.1.100:3001
+            - name: GITEA__USER_TOKEN
+              valueFrom:
+                secretKeyRef: { name: pr-agent-secrets, key: GITEA__USER_TOKEN }
+            - name: GITEA__WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef: { name: pr-agent-secrets, key: GITEA__WEBHOOK_SECRET }
+
+            # ── Model ────────────────────────────────────────────────────────
+            # Change CONFIG__MODEL and CONFIG__FALLBACK_MODELS TOGETHER. The
+            # image defaults to OpenAI; a half-changed config only fails on the
+            # retry path, which is the worst way to find out.
+            - name: CONFIG__MODEL
+              value: anthropic/claude-opus-4-8
+            - name: CONFIG__FALLBACK_MODELS
+              value: '["anthropic/claude-opus-4-8"]'
+            - name: ANTHROPIC__KEY
+              valueFrom:
+                secretKeyRef: { name: pr-agent-secrets, key: ANTHROPIC__KEY }
+            # The image ships 32000, which caps EVERY model regardless of what
+            # it can take. Large diffs get silently pruned and the review ends
+            # with "insufficient token budget to process".
+            - name: CONFIG__MAX_MODEL_TOKENS
+              value: "200000"
+
+            # ── Triggers ─────────────────────────────────────────────────────
+            - name: GITEA__PR_COMMANDS
+              value: '["/describe", "/review", "/improve"]'
+            # Commits outside a PR cost nothing.
+            - name: GITEA__HANDLE_PUSH_TRIGGER
+              value: "false"
+
+            # ── Comment style ────────────────────────────────────────────────
+            # Upstream default is "persistent": every run silently EDITS the
+            # same comment near the top of the thread. Fine for a one-shot PR,
+            # awful for an agent-driven branch where you want one round per
+            # commit, in order. With these off the thread reads chronologically.
+            - name: PR_REVIEWER__PERSISTENT_COMMENT
+              value: "false"
+            - name: PR_CODE_SUGGESTIONS__PERSISTENT_COMMENT
+              value: "false"
+            # Meaningless once persistent comments are off.
+            - name: PR_REVIEWER__FINAL_UPDATE_MESSAGE
+              value: "false"
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits:   { memory: 1Gi }
+          # A GET on the webhook path returns 404 by design — it is POST-only —
+          # so an httpGet probe would fail a healthy pod. Probe TCP.
+          readinessProbe:
+            tcpSocket: { port: 3000 }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          livenessProbe:
+            tcpSocket: { port: 3000 }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pr-agent-lan
+  namespace: pr-agent
+spec:
+  type: LoadBalancer
+  # From the Cilium lan-pool. This exact IP must appear in Forgejo's
+  # FORGEJO__webhook__ALLOWED_HOST_LIST, which defaults to `external` and
+  # otherwise refuses every private-IP delivery before it leaves the container.
+  loadBalancerIP: 192.168.1.203
+  selector: { app: pr-agent }
+  ports:
+    - name: http
+      protocol: TCP
+      port: 3000
+      targetPort: 3000

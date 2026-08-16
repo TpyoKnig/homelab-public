@@ -1,0 +1,34 @@
+# PR-Agent — AI code review on every Forgejo PR. See docs/10-pr-agent.md.
+#
+# SINGLE-source `path:`, unlike the chart-based apps here: upstream publishes no
+# Helm chart, so there is nothing to point a two-source `$values` ref at. The
+# manifests in apps/pr-agent/ are applied directly.
+#
+# Sync-wave 2: after the platform (it needs a Cilium LoadBalancer IP) and after
+# sops-secrets-operator, which turns secrets.sops.yaml into the Secret the
+# Deployment mounts. Without that Secret the pod sits in CreateContainerConfigError
+# rather than reporting a missing credential.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pr-agent
+  namespace: argocd
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: pr-agent
+  source:
+    repoURL: http://192.168.1.100:3001/<user>/homelab-gitops.git
+    targetRevision: main
+    path: apps/pr-agent
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions:
+      # The Namespace is in the manifests rather than created by Argo, because
+      # it carries the restricted PSS labels. CreateNamespace=true would make an
+      # unlabelled one first and the labels would land afterwards.
+      - ServerSideApply=true

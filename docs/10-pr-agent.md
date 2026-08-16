@@ -12,6 +12,12 @@ not that, and nothing here talks to Qodo's servers. Only the model API is called
 a first-class `gitea` provider with full `/describe`, `/review`, `/improve` and `/ask`
 support. No fork, no adapter, no shim.
 
+Manifests: [`iac/apps/pr-agent/`](../iac/apps/pr-agent/) (Namespace, Deployment, Service,
+and the SopsSecret template) and
+[`iac/argocd/app-pr-agent.yaml`](../iac/argocd/app-pr-agent.yaml). Upstream publishes no
+Helm chart, so this is the one workload here deployed from raw YAML by a **single-source**
+Argo Application rather than the two-source chart+values pattern.
+
 > Image naming changed at the handover. Old images are `codiumai/pr-agent:*` and stop at
 > `0.34`. Current images are `pragent/pr-agent:<version>-<target>`; the one to run is the
 > `-gitea_app` variant, which is the FastAPI webhook receiver rather than the CLI. Docs

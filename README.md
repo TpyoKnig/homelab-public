@@ -48,6 +48,34 @@ is still reachable, and the cluster can be rebuilt from it.
 | [iac/](iac/) | The OpenTofu roots, platform values, Argo manifests |
 | [scripts/](scripts/) | Ops-host bootstrap, etcd snapshots, Cloudflare DNS helper |
 
+### How `iac/` is organised
+
+Split by **how a thing is deployed**, not by what it is. That is why n8n is not
+under `apps/` — it has no chart and no values file.
+
+```
+iac/
+├── tofu/          OpenTofu roots — run by tofu-controller, or by hand
+│   ├── cluster/       the Talos cluster itself
+│   └── n8n/           the n8n module call + caller-owned ingress and RWX PVC
+├── platform/      cluster plumbing installed before GitOps takes over
+│                  (Cilium, Longhorn, cert-manager, ingress-nginx, cloudflared,
+│                   Grafana provisioning + the custom dashboard JSON)
+├── apps/          per-workload config that an Argo Application consumes
+│   ├── searxng/       Helm values          → two-source Application
+│   ├── n8n-sandbox/   Helm values + CA     → two-source Application
+│   └── pr-agent/      raw manifests        → single-source Application
+└── argocd/        the Applications themselves, plus the CRs they own
+```
+
+Which shape an app takes depends on what upstream publishes:
+
+| Upstream publishes | Application shape | Config lives in | Example |
+| --- | --- | --- | --- |
+| A Helm chart | Two sources: chart + `ref: values` | `apps/<name>/values.yaml` | searxng, n8n-sandbox |
+| Nothing (raw YAML) | One source: `path:` | `apps/<name>/*.yaml` | pr-agent |
+| A Terraform module | One source: `path:`, owning a `Terraform` CR | `tofu/n8n/*.tf` | n8n |
+
 ## Design decisions
 
 | Decision | Choice | Why |
