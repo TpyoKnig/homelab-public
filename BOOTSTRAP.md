@@ -264,8 +264,10 @@ kubectl create namespace n8n
 kubectl -n n8n create secret generic ai-assistant-secrets \
   --from-literal=model-api-key=... --from-literal=sandbox-api-key=...
 
-# in the GitOps repo
-cp -r iac/tofu/n8n iac/argocd/n8n-terraform.yaml .    # adjust hosts, allowlist
+# copy into the GitOps repo, then adjust hosts and the editor allowlist
+cp -r iac/tofu/n8n            "$GITOPS_REPO/iac/tofu/n8n"
+cp    iac/argocd/n8n-terraform.yaml "$GITOPS_REPO/bootstrap/"
+cd "$GITOPS_REPO"
 git commit -am "n8n" && git push
 kubectl apply -f iac/argocd/app-n8n.yaml
 kubectl -n flux-system get terraform n8n -w
