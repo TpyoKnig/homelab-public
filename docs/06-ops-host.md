@@ -209,11 +209,16 @@ Wire the Grafana Tempo datasource with `tracesToLogsV2` (span → matching Loki 
 
 ### Dashboards and datasources
 
-Both are **provisioned from files**, not clicked in:
+Provision both **from files**, not the UI:
 [`iac/platform/grafana-datasources.yaml`](../iac/platform/grafana-datasources.yaml) and
 [`iac/platform/grafana-dashboards.yaml`](../iac/platform/grafana-dashboards.yaml), mounted
 under `/etc/grafana/provisioning/`. That is the difference between an observability stack
 you can rebuild and one you have to remember.
+
+> The lab this came from does **not** do this yet — its datasources and dashboards were
+> clicked in and live only in Grafana's SQLite, which is a restore-from-backup dependency
+> rather than a rebuild. The files here are the fix, not a mirror. If you are starting
+> fresh, start provisioned; it costs nothing on day one and is tedious to retrofit.
 
 Four datasources: **Prometheus**, **Loki**, **Tempo** (with `tracesToLogsV2` so a span
 jumps to its log lines), and **n8n-postgres** — a direct read used by the workflow
@@ -221,22 +226,43 @@ analytics dashboard, which queries n8n's schema rather than Prometheus. That las
 needs the cluster's Postgres reachable on the LAN; see
 [`iac/platform/cnpg-lan-service.yaml`](../iac/platform/cnpg-lan-service.yaml).
 
-| ID | Dashboard | Reads from |
+| ID | Dashboard (as titled in Grafana) | Reads from |
 | --- | --- | --- |
-| 24474 | n8n System Health Overview | Prometheus — Node.js heap, GC, event loop |
-| 24475 | n8n Workflow & Execution Analytics | Postgres — success rates, throughput, per-workflow trends |
+| — | n8n on Talos — *pick namespace/instance* | Prometheus + Loki — the landing page |
+| 24474 | n8n System Health Overview — *pick instance* | Prometheus — Node.js heap, GC, event loop |
+| 24475 | n8n Workflow & Execution Analytics — *`<instance>`* | Postgres — success rates, throughput, per-workflow trends |
 | 1860 | Node Exporter Full | Prometheus — per-node CPU/mem/disk/net/temps |
-| 15757 / 15759 / 15760 | Kubernetes Views: Global / Nodes / Pods | Prometheus |
+| 15757 | Kubernetes / Views / Global | Prometheus — namespaces, workloads, pressure |
+| 15759 | Kubernetes / Views / Nodes | Prometheus — allocatable vs allocated |
+| 15760 | Kubernetes / Views / Pods | Prometheus — restarts, throttling, OOMs |
 
 ```bash
 curl -s https://grafana.com/api/dashboards/1860/revisions/latest/download \
   -o /mnt/data/grafana/dashboards/node-exporter-full.json
 ```
 
-Plus one hand-built dashboard as the at-a-glance landing page — pod counts, queue depth,
-node utilisation and a live logs panel in one view. Not vendored here; export your own
-with **Share → Export → "Export for sharing externally"**, which swaps the hardcoded
-datasource UID for an `__inputs` variable so it is portable.
+**Put the required template variable in the dashboard title.** The `— pick
+namespace/instance` suffixes above are deliberate. Several of these render blank until you
+select a value, and a blank dashboard is indistinguishable from a broken one at a glance —
+particularly six months later, or for anyone who is not you. Naming the variable in the
+title turns "this is broken" into "set the dropdown". Where a dashboard is pinned to one
+instance, put *that* in the title instead, so a second n8n deployment can't be misread as
+the first.
+
+The first row is the hand-built landing page, and its JSON **is** included:
+[`iac/platform/dashboards/n8n-on-talos.json`](../iac/platform/dashboards/n8n-on-talos.json).
+Twelve panels — pod counts per role, queue depth, cache hit rate, node CPU and memory,
+pod count by namespace, pods not Running, plus two logs panels (live n8n main, and a
+cluster-wide error/warning filter).
+
+It carries `DS_PROMETHEUS` and `DS_LOKI` **datasource-type template variables**, so it
+binds to whatever datasources exist on import rather than to the UIDs of the Grafana it
+was built on. Worth doing for any dashboard you intend to share: the alternative is a
+dashboard that renders empty on every machine but yours, with no error explaining why.
+
+For your own dashboards, either build them that way or export with **Share → Export →
+"Export for sharing externally"**, which rewrites the hardcoded UIDs into `__inputs`
+prompts at import time.
 
 **Two things make these work, and both fail quietly:**
 
