@@ -1,0 +1,37 @@
+# Expose the CNPG primary on the LAN so the off-cluster Grafana can read n8n's
+# schema for the workflow-analytics dashboard (grafana.com 24475), which queries
+# Postgres directly rather than Prometheus.
+#
+# Declared on the Cluster CR rather than by patching the generated Service.
+# CNPG owns n8n-pg-rw and will revert a hand-patched type: LoadBalancer; this
+# spawns a SECOND Service alongside it and leaves the generated one ClusterIP.
+# App traffic keeps using the ClusterIP path.
+#
+# The two `protocol: TCP` / `updateStrategy: patch` defaults CNPG auto-inserts
+# are written out explicitly so Argo's diff stays empty. Omit them and the app
+# sits OutOfSync forever on fields nobody set.
+#
+# Read-write endpoint, and Grafana only issues SELECTs. If that distinction
+# matters to you, point the datasource at a read-only role instead.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: n8n-pg
+  namespace: n8n
+spec:
+  managed:
+    services:
+      additional:
+        - selectorType: rw
+          updateStrategy: patch
+          serviceTemplate:
+            metadata:
+              name: n8n-pg-lan
+            spec:
+              type: LoadBalancer
+              loadBalancerIP: 192.168.1.201     # from the Cilium lan-pool
+              ports:
+                - name: postgres
+                  protocol: TCP
+                  port: 5432
+                  targetPort: 5432

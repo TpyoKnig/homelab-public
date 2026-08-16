@@ -207,6 +207,48 @@ by waiting.
 Wire the Grafana Tempo datasource with `tracesToLogsV2` (span → matching Loki lines by
 `service.name`) and `tracesToMetrics`.
 
+### Dashboards and datasources
+
+Both are **provisioned from files**, not clicked in:
+[`iac/platform/grafana-datasources.yaml`](../iac/platform/grafana-datasources.yaml) and
+[`iac/platform/grafana-dashboards.yaml`](../iac/platform/grafana-dashboards.yaml), mounted
+under `/etc/grafana/provisioning/`. That is the difference between an observability stack
+you can rebuild and one you have to remember.
+
+Four datasources: **Prometheus**, **Loki**, **Tempo** (with `tracesToLogsV2` so a span
+jumps to its log lines), and **n8n-postgres** — a direct read used by the workflow
+analytics dashboard, which queries n8n's schema rather than Prometheus. That last one
+needs the cluster's Postgres reachable on the LAN; see
+[`iac/platform/cnpg-lan-service.yaml`](../iac/platform/cnpg-lan-service.yaml).
+
+| ID | Dashboard | Reads from |
+| --- | --- | --- |
+| 24474 | n8n System Health Overview | Prometheus — Node.js heap, GC, event loop |
+| 24475 | n8n Workflow & Execution Analytics | Postgres — success rates, throughput, per-workflow trends |
+| 1860 | Node Exporter Full | Prometheus — per-node CPU/mem/disk/net/temps |
+| 15757 / 15759 / 15760 | Kubernetes Views: Global / Nodes / Pods | Prometheus |
+
+```bash
+curl -s https://grafana.com/api/dashboards/1860/revisions/latest/download \
+  -o /mnt/data/grafana/dashboards/node-exporter-full.json
+```
+
+Plus one hand-built dashboard as the at-a-glance landing page — pod counts, queue depth,
+node utilisation and a live logs panel in one view. Not vendored here; export your own
+with **Share → Export → "Export for sharing externally"**, which swaps the hardcoded
+datasource UID for an `__inputs` variable so it is portable.
+
+**Two things make these work, and both fail quietly:**
+
+- **The `cluster` label.** Every `157xx` dashboard filters on `{cluster="$cluster"}` and
+  renders completely empty without it. The scrape config injects it with a static relabel.
+  Nothing warns you — the panels just say "No data".
+- **The kubelet cadvisor job.** Pod-level CPU and memory panels read `container_*` and
+  `machine_*`, which come from `/metrics/cadvisor` on the kubelet — not from node-exporter
+  and not from kube-state-metrics. Miss that scrape job and the dashboard loads, most
+  panels populate, and only the per-pod ones are blank, which reads as a broken dashboard
+  rather than a missing target.
+
 ### Retention
 
 | Store | Retention | Configured in |

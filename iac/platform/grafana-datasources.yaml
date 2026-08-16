@@ -1,0 +1,63 @@
+# Grafana provisioning — /opt/obs/grafana/provisioning/datasources/datasources.yaml
+#
+# Mount into the Grafana container at
+# /etc/grafana/provisioning/datasources/. Provisioned datasources are read-only
+# in the UI, which is the point: they are reproducible from this file after a
+# rebuild rather than clicked back in from memory.
+apiVersion: 1
+
+datasources:
+  # Service names, not IPs — these resolve on the compose network.
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      timeInterval: 30s          # match the scrape_interval or rate() lies
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: tempo   # Tempo remote-writes exemplars into Prometheus
+
+  - name: Loki
+    type: loki
+    uid: loki
+    access: proxy
+    url: http://loki:3100
+
+  - name: Tempo
+    type: tempo
+    uid: tempo
+    access: proxy
+    url: http://tempo:3200
+    jsonData:
+      # Span → the matching Loki lines. Without this a trace is a dead end.
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: -1h
+        spanEndTimeShift: 1h
+        filterByTraceID: false
+        tags: [{ key: service.name, value: app }]
+      tracesToMetrics:
+        datasourceUid: prometheus
+      serviceMap:
+        datasourceUid: prometheus
+
+  # Direct Postgres read, for the workflow-analytics dashboard (24475) which
+  # queries n8n's schema rather than Prometheus.
+  #
+  # Reaches the cluster over the LAN LoadBalancer IP — see
+  # iac/platform/cnpg-lan-service.yaml. Grafana only issues SELECTs, but this is
+  # the read-write endpoint, so give it a read-only role if you care.
+  - name: n8n-postgres
+    type: postgres
+    uid: n8n-postgres
+    url: 192.168.1.201:5432
+    user: n8n
+    database: n8n
+    secureJsonData:
+      password: ${N8N_PG_PASSWORD}     # from /opt/obs/.env, mode 600
+    jsonData:
+      sslmode: disable                 # LAN-only, firewalled at the router
+      postgresVersion: 1600
