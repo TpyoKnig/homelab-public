@@ -34,11 +34,11 @@ per box: 1x16 GB free, 2x16 GB for $50, 2x32 GB for $225 and a QA build first be
 $210 a machine, $630 all in. They threw in a PCIe riser and bracket on one of them for
 nothing.
 
-The invoice then split that $630 into $450 for machines and $180 for shipping, which
-confused me until they explained it: they count QA and assembly as a handling fee and drop
-the listed item price to the insurable cost of the components, which is cleaner for customs
-and better for their margin. Same total to me either way. $672.53 delivered with tax.
-Three HA nodes and 96 GB of RAM for less than one mid-range GPU.
+The invoice splits that $630 into $450 for machines and $180 for shipping. That isn't what
+shipping cost. They count QA and assembly as a handling fee and drop the listed item price
+to the insurable cost of the components, which is cleaner for customs and better for their
+margin. Same total either way. $672.53 delivered with tax, for three HA nodes and 96 GB of
+RAM. Less than one mid-range GPU.
 
 If you're shopping for this, message the seller. Every used-enterprise-hardware storefront
 is one person with a shelf, and a lot of three is worth a conversation to them. Ask for the
