@@ -26,18 +26,24 @@ if I'd started by installing Kubernetes and figured out the rest afterward.
 
 I didn't get these from Amazon. I found a seller on eBay listing Lenovo ThinkCentre M920q
 Tinys one at a time, i5-8500T, 16 GB, 256 GB NVMe, and messaged them about a bundle. Turned
-out they had a lot more than three on the shelf and were trickling out inventory. We went
-back and forth about RAM and I ended up with a custom listing: three machines, i5-8500T
-vPro, 2x16 GB, 256 GB NVMe, $450.
+out they had a lot more than three on the shelf and were trickling out inventory.
 
-Then shipping was $180, which is a funny line item on a $450 order, and the whole thing
-landed at $672.53 delivered. Three HA nodes and 96 GB of RAM for less than one mid-range
-GPU.
+The quote came back at $160 a machine including shipping, with a menu of upgrades priced
+per box: 1x16 GB free, 2x16 GB for $50, 2x32 GB for $225 and a QA build first because
+64 GB only works on later BIOS revisions. I took the 2x16 GB option on all three, so
+$210 a machine, $630 all in. They threw in a PCIe riser and bracket on one of them for
+nothing.
+
+The invoice then split that $630 into $450 for machines and $180 for shipping, which
+confused me until they explained it: they count QA and assembly as a handling fee and drop
+the listed item price to the insurable cost of the components, which is cleaner for customs
+and better for their margin. Same total to me either way. $672.53 delivered with tax.
+Three HA nodes and 96 GB of RAM for less than one mid-range GPU.
 
 If you're shopping for this, message the seller. Every used-enterprise-hardware storefront
 is one person with a shelf, and a lot of three is worth a conversation to them. Ask for the
-RAM you want instead of buying sticks separately, mine swapped to 2x16 GB per box before
-shipping, which in 2026 is worth a lot more than it sounds like.
+RAM you want instead of buying sticks separately, $50 a box to go from 16 GB to 32 GB is a
+price that no longer exists anywhere in 2026.
 
 What actually matters in the spec is shorter than you'd think. A wired NIC, because the
 control-plane VIP and Cilium's L2 announcements need a real L2 segment and Wi-Fi won't do.
