@@ -11,6 +11,7 @@
 | Wired ethernet | 3 ports (+1 for NAS) | Same L2 segment. No Wi-Fi — the control-plane VIP and Cilium L2 announcements need it |
 | Raspberry Pi 5 8 GB | 1 | Ops host: off-cluster observability + bastion. See [06-ops-host](06-ops-host.md) |
 | NAS (4-bay, RAID 6) | 1 | Backup target and RWX shares. **Not** Longhorn's primary storage |
+| 3.5" SATA drives | 3 | 8 TB 7200 RPM enterprise, bought used. Populate the NAS. Test every drive the day it arrives — a set bought recertified from a storefront arrived 3-for-3 dead and had to be returned |
 
 Any small-form-factor x86 box works. The three things that matter: wired NIC, an NVMe
 big enough for the OS plus Longhorn replicas, and a BIOS that can be told to power on
