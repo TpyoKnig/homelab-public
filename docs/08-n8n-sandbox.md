@@ -16,7 +16,7 @@ Without it, the assistant loads and chats but every code execution fails.
 > you cannot modify. The chart's default `sysbox` mode cannot work there at all — see
 > [Why `dind` mode on Talos](#why-dind-mode-on-talos).
 
-Pinned at the git tag **`0.0.1`** (commit `e74673e`), whose vendored chart declares
+Pinned at the git tag **`0.0.1`** (commit `3a52ff8`), whose vendored chart declares
 `version: 0.3.0`, `appVersion: 0.1.0`. The chart is **not published to a registry** —
 reference the tag or the commit to get this exact copy. Deployed in `dind` mode, which
 exists for exactly this kind of cluster.
@@ -172,7 +172,7 @@ can run this.
 **The chart is not published to any registry.** It is vendored in the service repo and
 distributed by git tag only — there is no Helm repo and no OCI artifact to `helm repo add`
 or pull from. `0.3.0` is the version string inside `Chart.yaml`; the thing you actually
-reference is the **tag `0.0.1`** (commit `e74673e`). Pin the tag, not the chart version.
+reference is the **tag `0.0.1`** (commit `3a52ff8`). Pin the tag, not the chart version.
 
 ```bash
 git clone --depth 1 --branch 0.0.1 https://github.com/TpyoKnig/n8n-sandbox-service.git
