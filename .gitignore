@@ -1,0 +1,16 @@
+# Terraform / OpenTofu state contains cluster PKI, the n8n encryption key and
+# the Valkey password. Never commit it.
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+terraform.tfvars
+*.auto.tfvars
+
+# Real values, as opposed to the .example files
+.env
+*.local.yaml
+
+# age / sops private keys
+keys.txt
+*.age

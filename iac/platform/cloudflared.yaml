@@ -1,0 +1,54 @@
+# cloudflared for the cluster tunnel. Dials OUT to Cloudflare's edge — no
+# inbound port is opened anywhere.
+#
+# Uses the remotely-managed tunnel model: routing config lives in Cloudflare, not
+# in a local config.yml, so route changes are one API call and the pod only ever
+# holds a connector token.
+#
+#   kubectl -n cloudflared create secret generic cloudflared-tunnel-token \
+#     --from-literal=token=<CONNECTOR_TOKEN>
+#
+# The CONNECTOR token, not the API token. See docs/04-cloudflare.md.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cloudflared
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared
+  namespace: cloudflared
+spec:
+  # Two replicas × four connections each = eight tunnels to the edge. This is the
+  # HA story: a node loss drops half the connections and no requests.
+  replicas: 2
+  selector:
+    matchLabels: { app: cloudflared }
+  template:
+    metadata:
+      labels: { app: cloudflared }
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels: { app: cloudflared }
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:2025.1.1
+          args: [tunnel, --no-autoupdate, --metrics, "0.0.0.0:2000", run]
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef: { name: cloudflared-tunnel-token, key: token }
+          livenessProbe:
+            httpGet: { path: /ready, port: 2000 }
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { memory: 256Mi }

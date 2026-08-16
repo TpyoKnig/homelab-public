@@ -1,0 +1,48 @@
+# Let's Encrypt via Cloudflare DNS-01.
+#
+# DNS-01 rather than HTTP-01 because nothing has to be reachable — the same
+# issuer covers hostnames served only through the tunnel and hostnames that
+# resolve only on the LAN.
+#
+# Prerequisite: a Cloudflare API token with Zone:DNS:Edit + Zone:Zone:Read,
+# stored as `cloudflare-api-token` in the cert-manager namespace.
+#
+# Prerequisite 2, if the router intercepts UDP/53: CoreDNS forwarding over DoT,
+# and cert-manager started with
+#   --dns01-recursive-nameservers=10.96.0.10:53 --dns01-recursive-nameservers-only
+# Without it the propagation self-check stalls indefinitely and the failure
+# points nowhere near DNS interception.
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    email: you@example.com
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-staging-account-key
+    solvers:
+      - dns01:
+          cloudflare:
+            apiTokenSecretRef: { name: cloudflare-api-token, key: api-token }
+        selector:
+          dnsZones: [example.com]
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    email: you@example.com
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-prod-account-key
+    solvers:
+      - dns01:
+          cloudflare:
+            apiTokenSecretRef: { name: cloudflare-api-token, key: api-token }
+        selector:
+          dnsZones: [example.com]

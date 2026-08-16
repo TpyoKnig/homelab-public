@@ -1,0 +1,55 @@
+# SearXNG — minimal overrides on chart defaults.
+# Chart: https://charts.kubito.dev / searxng 1.1.4
+
+# Chart default is also 1, but pin it so a chart bump can't silently scale up.
+# Stateless, but replicas share no cache without Redis and the limiter prefers a
+# single process anyway.
+replicaCount: 1
+
+image:
+  repository: searxng/searxng
+  # A real tag. `latest` drifts on every sync and Argo will not notice, because
+  # the rendered manifest is identical either way.
+  tag: "2026.8.3-aa059419f"
+  imagePullPolicy: IfNotPresent
+
+resources:
+  requests: { cpu: "50m", memory: "128Mi" }
+  limits: { memory: "512Mi" }
+
+config:
+  settings:
+    server:
+      # GENERATE YOUR OWN: openssl rand -hex 32
+      # Signs session cookies and the limiter token, not credentials — but still
+      # a secret. Deliver it as a SopsSecret or via an existingSecret pattern if
+      # plaintext-in-git isn't acceptable to you.
+      secret_key: "REPLACE_ME_openssl_rand_hex_32"
+      limiter: false          # true needs Redis; add when abuse actually happens
+      image_proxy: true
+    search:
+      safe_search: 0
+      # `json` is the load-bearing entry for the LLM-tool use case. Without it,
+      # SearXNG serves humans only and n8n's research tool gets nothing.
+      formats: [html, json]
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # Home only. The real client IP arrives via X-Forwarded-For because
+    # ingress-nginx runs with use-forwarded-headers + compute-full-forwarded-for.
+    # Without those two this allowlist admits everyone or nobody.
+    #
+    # The LAN /24 is included so a direct hit on http://192.168.1.200, bypassing
+    # the tunnel, still works.
+    nginx.ingress.kubernetes.io/whitelist-source-range: "203.0.113.10/32,192.168.1.0/24"
+  hosts:
+    - host: searxng.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - hosts: [searxng.example.com]
+      secretName: searxng-tls

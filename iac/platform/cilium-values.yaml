@@ -1,0 +1,35 @@
+# Cilium on Talos. These are not stylistic preferences — the chart defaults do
+# not work on Talos, and several of these are load-bearing.
+#
+#   helm install cilium cilium/cilium -n kube-system --version 1.17.6 -f this
+
+ipam:
+  mode: kubernetes
+
+kubeProxyReplacement: true
+
+# Talos KubePrism: a local proxy to the API server, so Cilium can reach the API
+# before there is any CNI or kube-proxy. Without these two, Cilium cannot come up
+# at all on a cni:none cluster.
+k8sServiceHost: localhost
+k8sServicePort: 7445
+
+cgroup:
+  autoMount:
+    enabled: false          # Talos already mounts cgroup v2
+  hostRoot: /sys/fs/cgroup
+
+securityContext:
+  capabilities:
+    ciliumAgent:
+      [CHOWN, KILL, NET_ADMIN, NET_RAW, IPC_LOCK, SYS_ADMIN, SYS_RESOURCE,
+       DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    cleanCiliumState: [NET_ADMIN, SYS_ADMIN, SYS_RESOURCE]
+
+# Advertise LoadBalancer IPs on the LAN over ARP. This is what replaces MetalLB.
+l2announcements:
+  enabled: true
+
+hubble:
+  relay: { enabled: true }
+  ui: { enabled: true }

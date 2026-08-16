@@ -1,0 +1,41 @@
+# Longhorn. The namespace must be labelled privileged BEFORE installing, or the
+# system pods never start:
+#
+#   kubectl create namespace longhorn-system
+#   kubectl label namespace longhorn-system \
+#     pod-security.kubernetes.io/enforce=privileged \
+#     pod-security.kubernetes.io/audit=privileged \
+#     pod-security.kubernetes.io/warn=privileged
+
+defaultSettings:
+  # Must match the kubelet extraMount in the Talos machine config. Talos v1.10+
+  # uses /var/mnt/longhorn, not the older /var/lib/longhorn — out of sync and
+  # Longhorn silently writes to the ephemeral overlay.
+  defaultDataPath: /var/mnt/longhorn
+  defaultReplicaCount: 3            # one per node: survives a node loss
+
+persistence:
+  defaultClass: true
+  defaultClassReplicaCount: 3
+
+# ── Backup target ────────────────────────────────────────────────────────────
+# defaultSettings.backupTarget is a SILENT NO-OP on Longhorn 1.9+ — the setting
+# was removed in favour of the BackupTarget CR. `defaultBackupStore` is the key
+# that actually populates it.
+#
+# CIFS rather than NFS: Longhorn's NFS backupstore driver mounts -t nfs4 with no
+# v3 fallback and no way to override the mount options, so it cannot use an
+# appliance that publishes no v4 pseudo-root. Talos needs no extension for this —
+# cifs and smb3 are compiled into its kernel.
+#
+# The /longhorn prefix is load-bearing: never point this inside a tree that an
+# `rsync --delete` mirror owns, or it gets wiped nightly.
+#
+# Clearing a target later needs a manual patch — removing the value here leaves
+# the CR populated:
+#   kubectl -n longhorn-system patch backuptarget default --type merge \
+#     -p '{"spec":{"backupTargetURL":""}}'
+#
+# defaultBackupStore:
+#   backupTarget: cifs://192.168.1.239/homelab_backup/longhorn
+#   backupTargetCredentialSecret: longhorn-cifs

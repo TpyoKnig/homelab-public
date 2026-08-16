@@ -1,0 +1,31 @@
+# SearXNG — self-hosted metasearch, and the AI Assistant's search backend.
+#
+# Chart from kubitodev: the upstream searxng/searxng-helm-chart was archived in
+# 2025-05. Sync-wave 0: nothing in-cluster depends on it.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: searxng
+  namespace: argocd
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: searxng
+  sources:
+    - repoURL: https://charts.kubito.dev
+      chart: searxng
+      targetRevision: 1.1.4        # chart version, not app version. Bump deliberately.
+      helm:
+        releaseName: searxng
+        valueFiles:
+          - $values/apps/searxng/values.yaml
+    - repoURL: http://192.168.1.100:3001/<user>/homelab-gitops.git
+      targetRevision: main
+      ref: values
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [CreateNamespace=true, ServerSideApply=true]

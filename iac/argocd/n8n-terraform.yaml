@@ -1,0 +1,69 @@
+# n8n Community edition, run by tofu-controller, owned by Argo CD.
+#
+# Argo CD does not run Terraform itself. It does not need to: it owns these two
+# resources in git, and the controller runs plan/apply against the root module at
+# `path`. A module version bump is a one-line commit to that root's `?ref=`.
+#
+# Requires, installed once (see docs/07-n8n.md):
+#   - Flux source-controller  (fetching only — NOT all of Flux, no conflict with Argo)
+#   - tofu-controller         https://github.com/flux-iac/tofu-controller
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: homelab-gitops
+  namespace: flux-system
+spec:
+  interval: 3m
+  # The LAN URL, same as Argo uses. Traffic never leaves the house.
+  url: http://192.168.1.100:3001/<user>/homelab-gitops.git
+  ref:
+    branch: main
+  # Private repo: a Secret with `username` + `password` (a scoped PAT).
+  secretRef:
+    name: forgejo-credentials
+---
+apiVersion: infra.contrib.fluxcd.io/v1alpha2
+kind: Terraform
+metadata:
+  name: n8n
+  namespace: flux-system
+spec:
+  interval: 10m
+
+  # The OpenTofu root. Unchanged from running it by hand — same main.tf, same
+  # `module "n8n" { source = "git::...?ref=X" }`. Only who runs it changes.
+  path: ./iac/tofu/n8n
+  sourceRef:
+    kind: GitRepository
+    name: homelab-gitops
+    namespace: flux-system
+
+  # `auto` means a push applies. Set to "" to stop at the plan and approve by
+  # writing the plan ID back into this field. Worth doing for anything that can
+  # destroy data — n8n's Postgres migrations are one-way.
+  approvePlan: auto
+
+  # Deleting this CR should not delete a live n8n. Destroy deliberately.
+  destroyResourcesOnDeletion: false
+
+  # State lives in a cluster Secret rather than a plaintext file on one host.
+  # This is the real upgrade over the CLI workflow: back it up with everything
+  # else, and stop worrying about a single Pi holding the encryption key.
+  #
+  # Outputs land here too — n8n_encryption_key among them.
+  writeOutputsToSecret:
+    name: n8n-tofu-outputs
+
+  # Scope this deliberately. The module creates namespaces, Deployments,
+  # Ingresses, CNPG clusters and Secrets; the controller default is broad.
+  serviceAccountName: tofu-runner-n8n
+
+  # Values that differ per environment. Anything secret stays OUT of here and out
+  # of state — `ai-assistant-secrets` is still created out of band, and the module
+  # only ever renders secretKeyRef.
+  vars:
+    - name: editor_host
+      value: n8n.example.com
+    - name: webhook_host
+      value: n8n-hooks.example.com

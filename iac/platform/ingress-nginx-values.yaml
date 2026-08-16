@@ -1,0 +1,21 @@
+controller:
+  service:
+    type: LoadBalancer      # Cilium hands it an IP from lan-pool (192.168.1.200)
+
+  ingressClassResource:
+    default: true
+  watchIngressWithoutClass: true
+
+  config:
+    # BOTH of these are required behind Cloudflare.
+    #
+    # Without them a request arriving through the tunnel reaches nginx as HTTP,
+    # gets a 308 to HTTPS, comes back through Cloudflare as HTTPS again, and
+    # loops forever.
+    #
+    # They are also what makes an IP allowlist work at all: with them nginx
+    # evaluates the real client address from X-Forwarded-For instead of
+    # cloudflared's pod IP. Without them every request appears to come from the
+    # tunnel, and `whitelist-source-range` admits everyone or nobody.
+    use-forwarded-headers: "true"
+    compute-full-forwarded-for: "true"

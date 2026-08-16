@@ -1,0 +1,43 @@
+machine:
+  install:
+    image: ${install_image}
+    disk: ${install_disk}
+  network:
+    interfaces:
+      # Selected by driver, not by name: the same board surfaces as enp0s31f6,
+      # eno2 or eth0 depending on firmware, and the driver is identical across
+      # all three boxes.
+      - deviceSelector:
+          driver: ${nic_driver}
+        dhcp: false
+        # Per-node addresses are merged in by talos_machine_configuration_apply.
+        routes:
+          - network: 0.0.0.0/0
+            gateway: ${gateway}
+
+  # Optional: in-cluster HTTP registry.
+  #
+  # Image pulls are done by containerd in the HOST network namespace, which
+  # resolves via Talos hostDNS on 127.0.0.53 — not CoreDNS. So a bare
+  # *.svc.cluster.local image ref can never resolve, and containerd defaults to
+  # https while a plain registry is http-only.
+  #
+  # Talos matches the mirror key LITERALLY against the image reference and never
+  # resolves it, which fixes both at once. The endpoint must be a node-routable
+  # address (a LoadBalancer IP), and the two must stay in sync.
+  #
+  # registries:
+  #   mirrors:
+  #     "zot.registry.svc.cluster.local:5000":
+  #       endpoints:
+  #         - http://192.168.1.202:5000
+
+  # Longhorn data directory. Talos v1.10+ uses /var/mnt/longhorn, not the older
+  # /var/lib/longhorn. Keep this in sync with Longhorn's defaultDataPath, or
+  # Longhorn silently writes to the ephemeral overlay.
+  kubelet:
+    extraMounts:
+      - destination: /var/mnt/longhorn
+        type: bind
+        source: /var/mnt/longhorn
+        options: [bind, rshared, rw]

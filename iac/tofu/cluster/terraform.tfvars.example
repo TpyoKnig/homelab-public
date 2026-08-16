@@ -1,0 +1,15 @@
+# Copy to terraform.tfvars and fill in. DO NOT commit terraform.tfvars.
+#
+# The state file contains the cluster PKI. Treat it as a secret: 0600 on a
+# backed-up host, or an encrypted remote backend.
+
+install_image = "factory.talos.dev/installer/PASTE_SCHEMATIC_ID_HERE:v1.13.7"
+
+# Everything else has defaults in variables.tf. Override only if your LAN or
+# hardware differs:
+#
+# node_ips     = ["192.168.1.101", "192.168.1.102", "192.168.1.103"]
+# vip_ip       = "192.168.1.110"
+# gateway      = "192.168.1.1"
+# nic_driver   = "e1000e"          # verify: talosctl -n <maint-ip> get links --insecure
+# install_disk = "/dev/nvme0n1"    # verify: talosctl -n <maint-ip> get disks --insecure

@@ -1,0 +1,83 @@
+# Talos Kubernetes Homelab
+
+A 3-node HA Talos Linux Kubernetes cluster plus a Raspberry Pi ops host, built entirely
+from OpenTofu and reconciled by Argo CD. Everything external is reached through a
+Cloudflare Tunnel — no inbound port is open on the LAN.
+
+This repo is the sanitised, publishable version of a lab that actually runs. IPs, domain
+and hostnames are placeholders (`example.com`, `192.168.1.0/24`); the architecture,
+gotchas and command sequences are real.
+
+```
+                    ┌───────────────── Home LAN 192.168.1.0/24 ─────────────────┐
+                    │                                                           │
+                    │  ┌────────┐    ┌────────┐    ┌────────┐    ┌───────────┐  │
+                    │  │ node-1 │    │ node-2 │    │ node-3 │    │  pi-ops   │  │
+                    │  │ CP+etcd│    │ CP+etcd│    │ CP+etcd│    │ Pi 5, .100│  │
+                    │  │  .101  │    │  .102  │    │  .103  │    │ Prom/Loki │  │
+                    │  └────┬───┘    └────┬───┘    └────┬───┘    │ Grafana   │  │
+                    │       └─── VIP .110 ─┴────────────┘        │ Forgejo   │  │
+                    │                                            └─────┬─────┘  │
+                    │  Cilium CNI · Longhorn · ingress-nginx .200       │        │
+                    │  cert-manager · KEDA · Argo CD                    │        │
+                    └───────────┬──────────────────────────────────────┬┘        │
+                                │ cloudflared (in-cluster)             │ cloudflared
+                                │  tunnel: cluster                     │  tunnel: pi-ops
+                                ▼                                      ▼
+                         Cloudflare edge  ── *.example.com ──  git.example.com
+```
+
+Two independent tunnels on purpose: if the cluster is gone, git — the source of truth —
+is still reachable, and the cluster can be rebuilt from it.
+
+## Contents
+
+| Doc | What |
+| --- | --- |
+| [BOOTSTRAP.md](BOOTSTRAP.md) | Bare metal → running workloads, in order, with verify steps |
+| [docs/01-hardware-and-network.md](docs/01-hardware-and-network.md) | The three machines, the Pi, BIOS, IP plan |
+| [docs/02-talos-cluster.md](docs/02-talos-cluster.md) | Talos image factory + the OpenTofu cluster root |
+| [docs/03-platform-layer.md](docs/03-platform-layer.md) | Cilium, Longhorn, cert-manager, ingress-nginx, KEDA |
+| [docs/04-cloudflare.md](docs/04-cloudflare.md) | Tunnel model, per-hostname DNS, DNS-01 certs |
+| [docs/05-gitops.md](docs/05-gitops.md) | Forgejo + Argo CD + SOPS/age, and the app pattern |
+| [docs/06-ops-host.md](docs/06-ops-host.md) | Off-cluster observability, Forgejo, backups |
+| [docs/07-n8n.md](docs/07-n8n.md) | n8n Community via `terraform-kubernetes-n8n`, split ingress, driven from Argo |
+| [docs/08-n8n-sandbox.md](docs/08-n8n-sandbox.md) | `n8n-sandbox-service` for AI Assistant code execution |
+| [docs/09-searxng.md](docs/09-searxng.md) | Self-hosted metasearch, also the assistant's search backend |
+| [docs/10-pr-agent.md](docs/10-pr-agent.md) | AI code review on every Forgejo PR |
+| [iac/](iac/) | The OpenTofu roots, platform values, Argo manifests |
+| [scripts/](scripts/) | Ops-host bootstrap, etcd snapshots, Cloudflare DNS helper |
+
+## Design decisions
+
+| Decision | Choice | Why |
+| --- | --- | --- |
+| Topology | 3× control-plane, all schedulable | True HA on three boxes; node-loss is testable |
+| Provisioning | OpenTofu + `siderolabs/talos` | Reproducible; the cluster is a `tofu apply` |
+| CNI | Cilium, kube-proxy replacement | Network policy + Hubble; one fewer component |
+| LoadBalancer | Cilium LB IPAM + L2 announcements | No MetalLB |
+| Storage | Longhorn on the node NVMe | Replicated PVs; survives one node down |
+| Ingress / TLS | ingress-nginx + cert-manager (DNS-01) | Same cert works via tunnel and via LAN IP |
+| External access | Cloudflare Tunnel, no port forwards | Nothing inbound; no LAN IP is public |
+| GitOps | Forgejo (on the Pi) + Argo CD + SOPS/age | Git survives the cluster; secrets editable offline |
+| Observability | Prometheus/Loki/Tempo/Grafana **off-cluster** | Don't monitor a thing with itself |
+| n8n | Community edition via OpenTofu module, run by tofu-controller | No licence; module is the deployment surface, and version bumps stay a git commit |
+
+## Upstream repos used here
+
+- [`TpyoKnig/terraform-kubernetes-n8n`](https://github.com/TpyoKnig/terraform-kubernetes-n8n) — the n8n module (CNPG + Valkey + KEDA + split ingress)
+- [`TpyoKnig/n8n-sandbox-service`](https://github.com/TpyoKnig/n8n-sandbox-service) — isolated code-execution sandboxes for the n8n AI Assistant
+
+## Reading the placeholders
+
+| Placeholder | Replace with |
+| --- | --- |
+| `example.com` | Your Cloudflare-hosted zone |
+| `192.168.1.0/24` | Your LAN |
+| `203.0.113.10/32` | Your home WAN IP (in the ingress allowlists) |
+| `<TUNNEL_UUID>`, `<ZONE_ID>`, `<ACCOUNT_ID>` | Cloudflare identifiers |
+| `<SCHEMATIC_ID>` | Your Talos Image Factory schematic |
+| `<user>` | Your Forgejo username |
+
+No secret, key, token or real address in this repo is live. `secret_key` and API-key
+fields are placeholders that must be regenerated.

@@ -1,0 +1,42 @@
+# The two-source pattern every chart-based app in this cluster uses: chart from
+# upstream, values from git. No fork, no vendored chart, no wrapper chart.
+#
+# Bump the chart by editing targetRevision. Tune config by editing the values
+# file. Both are commits.
+#
+# KEEP IT TO TWO SOURCES. Adding a third (chart + ref values + path for raw
+# manifests) is intermittently unreliable — the values-ref call to the repo-server
+# fails under load. For workloads that also need raw manifests, split into
+# `<name>` (this shape) and `<name>-secrets` (single-source path:).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-manager
+  namespace: argocd
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cert-manager
+  sources:
+    - repoURL: https://charts.jetstack.io
+      chart: cert-manager
+      targetRevision: v1.16.5
+      helm:
+        releaseName: cert-manager
+        valueFiles:
+          - $values/infra/cert-manager/values.yaml
+    - repoURL: http://192.168.1.100:3001/<user>/homelab-gitops.git
+      targetRevision: main
+      ref: values                  # ← this is what makes $values resolve above
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions:
+      - CreateNamespace=true
+      # Essential when adopting resources that already exist: client-side apply
+      # rewrites the whole object and clashes with Helm's annotations, while SSA
+      # merges only the fields Argo manages.
+      - ServerSideApply=true

@@ -1,0 +1,18 @@
+cluster:
+  allowSchedulingOnControlPlanes: true   # 3-node HA that also runs workloads
+  network:
+    cni:
+      name: none                         # Cilium provides the CNI
+  # Talos v1.13 spelling. Older examples show cluster.network.proxy.disabled,
+  # which v1.13 silently ignores — you end up with kube-proxy running alongside
+  # Cilium's replacement.
+  proxy:
+    disabled: true                       # Cilium replaces kube-proxy
+
+machine:
+  network:
+    interfaces:
+      - deviceSelector:
+          driver: ${nic_driver}
+        vip:
+          ip: ${vip_ip}

@@ -1,0 +1,26 @@
+# Argo owns the GitRepository + Terraform CRs; tofu-controller does the applying.
+# Single-source `path:` Application — there is no chart here, just manifests.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: n8n
+  namespace: argocd
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: flux-system
+  source:
+    repoURL: http://192.168.1.100:3001/<user>/homelab-gitops.git
+    targetRevision: main
+    path: iac/argocd
+    directory:
+      include: 'n8n-terraform.yaml'
+  syncPolicy:
+    automated:
+      prune: true
+      # selfHeal on the CR is what makes a hand-edit of the Terraform resource
+      # snap back to git. It does NOT re-run tofu — the controller owns that.
+      selfHeal: true
+    syncOptions: [ServerSideApply=true]

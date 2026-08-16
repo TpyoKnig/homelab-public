@@ -1,0 +1,34 @@
+# The root Application: watches bootstrap/ recursively, so every Application
+# committed there registers itself. Adding an app is a git push.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  source:
+    repoURL: http://192.168.1.100:3001/<user>/homelab-gitops.git
+    targetRevision: main
+    path: bootstrap
+    directory:
+      recurse: true
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [ServerSideApply=true]
+
+# ── Sync waves, and the failure mode they cause ──────────────────────────────
+# Child Applications carry argocd.argoproj.io/sync-wave annotations so infra
+# lands before workloads. The trap: root waits for an earlier wave to be Healthy
+# AND Synced before applying later ones, so ONE chronically OutOfSync child
+# stalls the whole chain and a brand-new Application at a later wave never
+# materialises. Root reports "all tasks run" while the resource is simply absent.
+#
+# Most common cause is a hand-written StatefulSet drifting on kube-defaulted
+# fields it never declared. Fix that with an ignoreDifferences block on the child.
+# Escape hatch meanwhile: kubectl apply -f bootstrap/app-<name>.yaml once — Argo
+# owns it normally from then on.

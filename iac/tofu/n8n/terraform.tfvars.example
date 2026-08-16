@@ -1,0 +1,24 @@
+# For running this root from the CLI. Copy to terraform.tfvars and fill in.
+# DO NOT commit terraform.tfvars.
+#
+# Under tofu-controller these are `spec.vars` on the Terraform CR instead
+# (iac/argocd/n8n-terraform.yaml), and state lives in a cluster Secret rather
+# than a local file. Either way the state holds the n8n encryption key and the
+# Valkey password — keep it in your backup set.
+
+editor_host      = "n8n.example.com"
+webhook_host     = "n8n-hooks.example.com"
+editor_allowlist = "203.0.113.10/32,192.168.1.0/24"   # your WAN IP + your LAN
+
+timezone = "UTC"
+
+# Verify the RWX class exists first: kubectl get sc
+# shared_storage_class = "smb-unas"
+
+# Before the first apply, create the assistant secret out of band so the keys
+# never enter Terraform state:
+#
+#   kubectl create namespace n8n
+#   kubectl -n n8n create secret generic ai-assistant-secrets \
+#     --from-literal=model-api-key=... \
+#     --from-literal=sandbox-api-key=...

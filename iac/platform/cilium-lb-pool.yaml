@@ -1,0 +1,26 @@
+# LoadBalancer IPs without MetalLB.
+#
+# The pool range must be EXCLUDED from the router's DHCP pool, or something else
+# will eventually take one of these addresses and the failure will look like a
+# Cilium bug.
+apiVersion: cilium.io/v2alpha1
+kind: CiliumLoadBalancerIPPool
+metadata:
+  name: lan-pool
+spec:
+  blocks:
+    - start: "192.168.1.200"
+      stop: "192.168.1.230"
+---
+apiVersion: cilium.io/v2alpha1
+kind: CiliumL2AnnouncementPolicy
+metadata:
+  name: lan-l2
+spec:
+  # Match YOUR NIC name. `^enp.*` is the commonly copy-pasted value and is wrong
+  # for boards that surface as eno2. Confirm with `talosctl get links`.
+  # A Service stuck at <pending> is usually this regex.
+  interfaces:
+    - "^eno.*"
+  externalIPs: true
+  loadBalancerIPs: true
