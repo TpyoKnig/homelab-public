@@ -28,7 +28,9 @@ spec:
   syncPolicy:
     automated: { prune: true, selfHeal: true }
     syncOptions:
-      # The Namespace is in the manifests rather than created by Argo, because
-      # it carries the restricted PSS labels. CreateNamespace=true would make an
-      # unlabelled one first and the labels would land afterwards.
+      # Both, deliberately. The Namespace also ships in the manifests because it
+      # carries the restricted PSS labels, which CreateNamespace alone does not
+      # set; ServerSideApply then merges those labels onto whichever one exists
+      # rather than fighting over ownership of the object.
+      - CreateNamespace=true
       - ServerSideApply=true

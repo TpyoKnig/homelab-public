@@ -1,8 +1,9 @@
 # PR-Agent — AI review on every Forgejo PR. See docs/10-pr-agent.md.
 #
-# Raw manifests, not a chart: upstream ships no Helm chart, so the Argo
-# Application for this one is single-source `path:` rather than the two-source
-# chart+values pattern used everywhere else in this repo.
+# This mirrors the running deployment, with LAN addresses re-based onto
+# 192.168.1.0/24. Raw manifests, not a chart: upstream ships no Helm chart, so
+# the Argo Application for this one is single-source `path:` rather than the
+# two-source chart+values pattern used elsewhere in this repo.
 #
 # Nothing here is reachable from the internet by design — no Ingress, no DNS
 # record, no TLS. Forgejo delivers webhooks to the LoadBalancer IP over the LAN
@@ -12,6 +13,7 @@ kind: Namespace
 metadata:
   name: pr-agent
   labels:
+    app.kubernetes.io/name: pr-agent
     # The image would run as root given the chance; restricted is what stops it.
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/warn: restricted
@@ -22,12 +24,11 @@ kind: Deployment
 metadata:
   name: pr-agent
   namespace: pr-agent
+  labels: { app: pr-agent }
 spec:
   # One replica on purpose. Reviews are idempotent background tasks, so a
   # restart loses at most one in-flight review — not worth the coordination.
   replicas: 1
-  strategy:
-    type: Recreate
   selector:
     matchLabels: { app: pr-agent }
   template:
@@ -42,17 +43,16 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: pr-agent
-          # The -gitea_app target is the FastAPI webhook receiver. The plain tag
-          # is the CLI and will start, serve nothing, and look healthy.
-          # Digest-pin it: the tag is mutable upstream.
-          image: pragent/pr-agent:0.42.0-gitea_app@sha256:<DIGEST>
+          # Digest-pinned. This digest IS 0.42.0-gitea_app — the FastAPI webhook
+          # receiver. The plain (non-gitea_app) target is the CLI: it starts,
+          # serves nothing, and looks perfectly healthy.
+          image: pragent/pr-agent@sha256:011209dd8e4e36d8fd82d76ca2146509b6e147dd3b189010f4a650eaef0cfa12
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
               containerPort: 3000
           securityContext:
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false      # writes scratch state under /tmp
             capabilities: { drop: [ALL] }
           env:
             # ── Forgejo (Gitea API) ──────────────────────────────────────────
@@ -62,36 +62,21 @@ spec:
               value: gitea
             - name: GITEA__URL
               value: http://192.168.1.100:3001
-            - name: GITEA__USER_TOKEN
-              valueFrom:
-                secretKeyRef: { name: pr-agent-secrets, key: GITEA__USER_TOKEN }
-            - name: GITEA__WEBHOOK_SECRET
-              valueFrom:
-                secretKeyRef: { name: pr-agent-secrets, key: GITEA__WEBHOOK_SECRET }
 
             # ── Model ────────────────────────────────────────────────────────
             # Change CONFIG__MODEL and CONFIG__FALLBACK_MODELS TOGETHER. The
-            # image defaults to OpenAI; a half-changed config only fails on the
-            # retry path, which is the worst way to find out.
+            # image defaults to OpenAI models and there is no OpenAI key in this
+            # cluster, so a half-changed config only fails on the retry path —
+            # the worst way to find out.
             - name: CONFIG__MODEL
-              value: anthropic/claude-opus-4-8
+              value: anthropic/claude-sonnet-5
             - name: CONFIG__FALLBACK_MODELS
-              value: '["anthropic/claude-opus-4-8"]'
-            - name: ANTHROPIC__KEY
-              valueFrom:
-                secretKeyRef: { name: pr-agent-secrets, key: ANTHROPIC__KEY }
+              value: '["anthropic/claude-haiku-4-5-20251001"]'
             # The image ships 32000, which caps EVERY model regardless of what
             # it can take. Large diffs get silently pruned and the review ends
             # with "insufficient token budget to process".
             - name: CONFIG__MAX_MODEL_TOKENS
               value: "200000"
-
-            # ── Triggers ─────────────────────────────────────────────────────
-            - name: GITEA__PR_COMMANDS
-              value: '["/describe", "/review", "/improve"]'
-            # Commits outside a PR cost nothing.
-            - name: GITEA__HANDLE_PUSH_TRIGGER
-              value: "false"
 
             # ── Comment style ────────────────────────────────────────────────
             # Upstream default is "persistent": every run silently EDITS the
@@ -105,19 +90,46 @@ spec:
             # Meaningless once persistent comments are off.
             - name: PR_REVIEWER__FINAL_UPDATE_MESSAGE
               value: "false"
+
+            # ── Secrets ──────────────────────────────────────────────────────
+            # Key names are the provider's, not ours — GITEA__PERSONAL_ACCESS_TOKEN
+            # is what the gitea provider reads. A near-miss like GITEA__USER_TOKEN
+            # is ignored silently and every API call comes back unauthenticated.
+            - name: GITEA__PERSONAL_ACCESS_TOKEN
+              valueFrom:
+                secretKeyRef: { name: pr-agent-secrets, key: GITEA__PERSONAL_ACCESS_TOKEN }
+            - name: GITEA__WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef: { name: pr-agent-secrets, key: GITEA__WEBHOOK_SECRET }
+            - name: ANTHROPIC__KEY
+              valueFrom:
+                secretKeyRef: { name: pr-agent-secrets, key: ANTHROPIC__KEY }
+
+            # Load-bearing under PSS restricted. The image writes cache and
+            # scratch state under $HOME, and uid 1000 has no home directory in
+            # this image — without this it crashes on a read-only path at
+            # startup. Paired with the `tmp` emptyDir below.
+            - name: HOME
+              value: /tmp
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
           resources:
-            requests: { cpu: 100m, memory: 256Mi }
+            requests: { cpu: 100m, memory: 512Mi }
             limits:   { memory: 1Gi }
           # A GET on the webhook path returns 404 by design — it is POST-only —
           # so an httpGet probe would fail a healthy pod. Probe TCP.
           readinessProbe:
             tcpSocket: { port: 3000 }
             initialDelaySeconds: 10
-            periodSeconds: 20
+            periodSeconds: 10
           livenessProbe:
             tcpSocket: { port: 3000 }
             initialDelaySeconds: 30
             periodSeconds: 30
+      volumes:
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
