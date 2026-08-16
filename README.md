@@ -61,20 +61,33 @@ iac/
 ├── platform/      cluster plumbing installed before GitOps takes over
 │                  (Cilium, Longhorn, cert-manager, ingress-nginx, cloudflared,
 │                   Grafana provisioning + the custom dashboard JSON)
-├── apps/          per-workload config that an Argo Application consumes
+├── apps/          per-workload config, one directory per workload
+│   ├── n8n/           minimal registry-sourced module call — the short path
 │   ├── searxng/       Helm values          → two-source Application
 │   ├── n8n-sandbox/   Helm values + CA     → two-source Application
 │   └── pr-agent/      raw manifests        → single-source Application
 └── argocd/        the Applications themselves, plus the CRs they own
 ```
 
-Which shape an app takes depends on what upstream publishes:
+Which shape a workload takes depends on what upstream publishes:
 
-| Upstream publishes | Application shape | Config lives in | Example |
+| Upstream publishes | Deployment shape | Config lives in | Example |
 | --- | --- | --- | --- |
-| A Helm chart | Two sources: chart + `ref: values` | `apps/<name>/values.yaml` | searxng, n8n-sandbox |
-| Nothing (raw YAML) | One source: `path:` | `apps/<name>/*.yaml` | pr-agent |
-| A Terraform module | One source: `path:`, owning a `Terraform` CR | `tofu/n8n/*.tf` | n8n |
+| A Helm chart | Two-source Application: chart + `ref: values` | `apps/<name>/values.yaml` | searxng, n8n-sandbox |
+| Nothing (raw YAML) | Single-source Application: `path:` | `apps/<name>/*.yaml` | pr-agent |
+| A Terraform module | A `Terraform` CR run by tofu-controller | `tofu/<name>/*.tf` | n8n |
+
+**n8n has two entry points, and the difference is routing.**
+[`apps/n8n/`](iac/apps/n8n/) is a self-contained ~10-line module call sourced from the
+Terraform registry — `terraform apply` and you have queue-mode n8n with Postgres, Valkey
+and TLS. Start there. [`tofu/n8n/`](iac/tofu/n8n/) is what this lab actually runs: the same
+module with `create_ingress = false`, plus a caller-owned split ingress and an RWX volume.
+That exists because Community edition has no SSO, so authentication has to live at the
+ingress, and one hostname can't serve both an allowlisted editor and open webhooks.
+
+⚠️ The registry `source` form works under **Terraform** only. OpenTofu resolves module
+registry addresses against a different index that does not carry this module — use the
+`git::…?ref=` form there. Details in [docs/07](docs/07-n8n.md#calling-the-module).
 
 ## Design decisions
 
