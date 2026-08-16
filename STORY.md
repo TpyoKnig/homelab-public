@@ -63,7 +63,7 @@ remarkable.
 ## 3. The drives, which took two tries
 
 I bought three HGST Ultrastar 8 TB enterprise drives from an eBay storefront — $125 each,
-$414.55 with shipping and tax. They arrived four days later.
+$414.55 with shipping and tax. They arrived five days later.
 
 **All three were dead.** Not degraded, not throwing SMART warnings — none of them spun up
 at all. I tested each one two ways, through a USB dock and directly on a SATA port, and
@@ -205,8 +205,9 @@ sops-secrets-operator.
 
 The recovery story is the whole point: rebuild the three nodes from OpenTofu, run one
 bootstrap script, and Argo pulls everything else back. The only thing I must protect
-off-site is the age key and the Forgejo repo — both of which live on a $80 computer that
-draws 5 watts and is not part of the thing it's backing up.
+off-site is the age key and the Forgejo repo — both of which live on a single-board
+computer that cost less than a tenth of the cluster and is not part of the thing it's
+backing up.
 
 Apps take one of three shapes depending on what upstream publishes: a Helm chart becomes a
 two-source Application (chart + a `ref: values` pointing at my repo), raw YAML becomes a
@@ -226,9 +227,9 @@ event. Scraping from outside costs me a little convenience — no automatic
 ServiceMonitor discovery, some manual scrape config — and buys me a monitoring stack that
 is loudest exactly when the cluster is quietest.
 
-The Pi also runs Forgejo, its Actions runner, and the backup cron jobs. It is the single
-most load-bearing $80 in the lab, which is why it has its own tunnel, its own backups, and
-a documented rebuild path.
+The Pi also runs Forgejo, its Actions runner, and the backup cron jobs. It is the most
+load-bearing $80 in the lab, which is why it has its own tunnel, its own backups, and a
+documented rebuild path.
 
 Full detail: [docs/06-ops-host.md](docs/06-ops-host.md).
 
@@ -314,7 +315,7 @@ The properties that fall out of that:
 - **Rollback is `git revert`.** Not a restore, not a snapshot — the same mechanism as the
   change itself, which means I've already tested it every time I merge anything.
 - **Rebuilding is the same operation as deploying.** Bare metal to full stack is
-  `tofu apply`, one bootstrap script, and then Argo pulls back all 37 applications
+  `tofu apply`, one bootstrap script, and then Argo pulls every application back
   unattended. That path isn't theoretical — it's the same path every routine change takes,
   so it can't rot.
 - **Upgrades are a version string.** Bumping n8n is editing one line and merging the PR.
