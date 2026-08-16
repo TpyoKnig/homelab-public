@@ -6,6 +6,16 @@ an in-container Docker daemon, created and torn down over a REST API.
 
 Without it, the assistant loads and chats but every code execution fails.
 
+> **If you are on Talos — or any immutable-rootfs distro — use this repo at tag `0.0.1`.**
+> ```
+> repoURL:         https://github.com/TpyoKnig/n8n-sandbox-service.git
+> targetRevision:  0.0.1
+> path:            charts/n8n-sandbox-service
+> ```
+> That tag ships `dataPlane.mode: dind`, the only mode installable on a node whose runtime
+> you cannot modify. The chart's default `sysbox` mode cannot work there at all — see
+> [Why `dind` mode on Talos](#why-dind-mode-on-talos).
+
 Pinned at the git tag **`0.0.1`** (commit `e74673e`), whose vendored chart declares
 `version: 0.3.0`, `appVersion: 0.1.0`. The chart is **not published to a registry** —
 reference the tag or the commit to get this exact copy. Deployed in `dind` mode, which
