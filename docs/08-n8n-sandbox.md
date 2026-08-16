@@ -6,8 +6,10 @@ an in-container Docker daemon, created and torn down over a REST API.
 
 Without it, the assistant loads and chats but every code execution fails.
 
-Pinned at **`0.0.1`** (chart `n8n-sandbox-service` 0.3.0, app 0.1.0). Deployed by its own
-Helm chart, in `dind` mode — which exists for exactly this cluster.
+Pinned at the git tag **`0.0.1`** (commit `e74673e`), whose vendored chart declares
+`version: 0.3.0`, `appVersion: 0.1.0`. The chart is **not published to a registry** —
+reference the tag or the commit to get this exact copy. Deployed in `dind` mode, which
+exists for exactly this kind of cluster.
 
 ## Shape
 
@@ -157,16 +159,22 @@ name for the StatefulSet runners.
 No node labels, no tolerations, no RuntimeClass. Any node that can run a privileged pod
 can run this.
 
+**The chart is not published to any registry.** It is vendored in the service repo and
+distributed by git tag only — there is no Helm repo and no OCI artifact to `helm repo add`
+or pull from. `0.3.0` is the version string inside `Chart.yaml`; the thing you actually
+reference is the **tag `0.0.1`** (commit `e74673e`). Pin the tag, not the chart version.
+
 ```bash
+git clone --depth 1 --branch 0.0.1 https://github.com/TpyoKnig/n8n-sandbox-service.git
 helm upgrade --install n8n-sandbox-service \
-  oci://ghcr.io/tpyoknig/n8n-sandbox-service/n8n-sandbox-service --version 0.3.0 \
+  ./n8n-sandbox-service/charts/n8n-sandbox-service \
   --namespace n8n-sandbox \
   -f iac/apps/n8n-sandbox/values.yaml
 ```
 
-If the OCI chart isn't published for the tag you want, clone at `0.0.1` and install from
-`./charts/n8n-sandbox-service` — the Argo Application takes the git-path route for exactly
-that reason.
+The Argo Application takes the same route — `repoURL` + `path: charts/n8n-sandbox-service`
++ `targetRevision: "0.0.1"` — for exactly this reason. If a registry-published chart ever
+appears, swapping `sources[0]` to an `oci://` reference is the only change needed.
 
 > **Name the release after the chart.** The chart's `fullname` helper is the standard one:
 > `<release>-<chart>`, collapsed to just `<release>` when the release name already contains

@@ -66,7 +66,7 @@ is still reachable, and the cluster can be rebuilt from it.
 ## Upstream repos used here
 
 - [`TpyoKnig/terraform-kubernetes-n8n`](https://github.com/TpyoKnig/terraform-kubernetes-n8n) — the n8n module (CNPG + Valkey + KEDA + split ingress)
-- [`TpyoKnig/n8n-sandbox-service`](https://github.com/TpyoKnig/n8n-sandbox-service) `0.0.1` — isolated code-execution sandboxes for the n8n AI Assistant. Its own Helm chart (0.3.0), in `dataPlane.mode: dind` — the mode that exists for immutable-rootfs distributions, verified on Talos v1.13.7
+- [`TpyoKnig/n8n-sandbox-service`](https://github.com/TpyoKnig/n8n-sandbox-service) at tag `0.0.1` — isolated code-execution sandboxes for the n8n AI Assistant, in `dataPlane.mode: dind` — the mode that exists for immutable-rootfs distributions, verified on Talos v1.13.7. Its Helm chart is vendored in that repo and **published by git tag only**, so reference the tag or commit rather than a chart version
 
 ## Reading the placeholders
 

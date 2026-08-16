@@ -1,4 +1,5 @@
-# n8n-sandbox-service, chart 0.3.0 (repo tag 0.0.1).
+# n8n-sandbox-service, chart vendored at repo tag 0.0.1 (Chart.yaml version 0.3.0 —
+# not a pullable coordinate; the tag is what you reference).
 #
 # dind mode, because this is Talos: the sysbox installer writes the node's
 # containerd config and restarts kubelet, and Talos has no shell, no package

@@ -1,10 +1,10 @@
 # n8n-sandbox-service — isolated code execution for the n8n AI Assistant.
 #
-# Chart source is the git repo at a TAG, not an OCI reference: the chart lives in
-# the repo at charts/n8n-sandbox-service and is published to
-# oci://ghcr.io/tpyoknig/n8n-sandbox-service only when the release workflow runs.
-# The tag always resolves. Swap sources[0] for the OCI form once you have
-# confirmed the version you want is published.
+# Chart source is the git repo at a TAG. The chart is vendored at
+# charts/n8n-sandbox-service and is NOT published to a Helm repo or as an OCI
+# artifact — the tag (or a commit SHA) is the only way to get this exact copy.
+# Chart.yaml says version 0.3.0; that is not a pullable coordinate, so pin
+# targetRevision to the tag instead.
 #
 # Same two-source shape as every other app here: chart from upstream, values from
 # git. Bumping the service = bump targetRevision.
