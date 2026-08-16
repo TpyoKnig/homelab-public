@@ -95,7 +95,7 @@ variable "assistant_model" {
 variable "sandbox_service_url" {
   description = "In-cluster n8n-sandbox-service API. Moves together with the sandbox API key in ai-assistant-secrets."
   type        = string
-  default     = "http://sandbox-api.n8n-sandbox.svc.cluster.local:8080"
+  default     = "http://n8n-sandbox-service-api.n8n-sandbox.svc.cluster.local:8080"
 }
 
 variable "searxng_url" {

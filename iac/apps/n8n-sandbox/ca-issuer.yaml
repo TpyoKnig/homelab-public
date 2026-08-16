@@ -1,0 +1,47 @@
+# Private CA for the sandbox service's gRPC mTLS.
+#
+# NOT letsencrypt-prod. These four certificates authenticate two in-cluster
+# workloads to each other; a public ACME issuer would mean nothing here and
+# could not issue for *.svc.cluster.local anyway.
+#
+# The chart's tls.mode: certManager renders the four Certificates against this
+# issuer: API registration server, API control client, runner registration
+# client, runner control server. Without them both pods sit in
+# ContainerCreating waiting for volumes that never appear.
+#
+# Substitute your own CA Issuer/ClusterIssuer if you already run one — only the
+# issuerRef in values.yaml has to match.
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: sandbox-selfsigned
+  namespace: n8n-sandbox
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: sandbox-ca
+  namespace: n8n-sandbox
+spec:
+  isCA: true
+  commonName: n8n-sandbox-ca
+  secretName: sandbox-ca
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: sandbox-selfsigned
+    kind: Issuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: sandbox-ca
+  namespace: n8n-sandbox
+spec:
+  ca:
+    secretName: sandbox-ca

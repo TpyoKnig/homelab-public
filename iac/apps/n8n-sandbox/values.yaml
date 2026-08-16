@@ -1,0 +1,109 @@
+# n8n-sandbox-service, chart 0.3.0 (repo tag 0.0.1).
+#
+# dind mode, because this is Talos: the sysbox installer writes the node's
+# containerd config and restarts kubelet, and Talos has no shell, no package
+# manager and a read-only /. sysbox here is not slower, it is unavailable — the
+# sysbox-runc RuntimeClass never exists and the runner sits Pending forever.
+#
+# The trade is real and worth restating: a privileged container can see the
+# node's cgroup tree. Fine for a namespace running code you own. Not fine for a
+# shared or multi-tenant cluster.
+#
+# PREREQUISITE — the namespace must permit privileged pods, or no runner pod is
+# ever created and nothing obviously errors (PSA puts the denial on the
+# StatefulSet as an event):
+#
+#   kubectl label namespace n8n-sandbox \
+#     pod-security.kubernetes.io/enforce=privileged \
+#     pod-security.kubernetes.io/warn=privileged \
+#     pod-security.kubernetes.io/audit=privileged
+
+dataPlane:
+  mode: dind
+
+# ── Auth ─────────────────────────────────────────────────────────────────────
+# Created out of band as a SopsSecret, not by the chart — auth.generated.* would
+# put the values in the Helm release.
+#
+# runner-api-key and runner-api-keys MUST hold the same value: the API presents
+# the first when calling a runner, the runner accepts the second.
+auth:
+  existingSecret: sandbox-auth
+
+# ── mTLS ─────────────────────────────────────────────────────────────────────
+# The API and runner authenticate to each other with mTLS. The chart default
+# (existingSecret) expects four TLS Secrets it does not create; without them both
+# pods sit in ContainerCreating waiting for volumes that never appear.
+#
+# certManager renders all four Certificates instead. Points at a PRIVATE CA
+# Issuer in this namespace — not letsencrypt-prod. These are workload-to-workload
+# certificates; a public ACME issuer would mean nothing here.
+tls:
+  mode: certManager
+  certManager:
+    issuerRef:
+      name: sandbox-ca
+      kind: Issuer
+      group: cert-manager.io
+
+api:
+  replicaCount: 1          # SQLite store; >1 needs api.config.store=postgres
+  image:
+    # Pin. A node that already holds a tag never re-pulls it, so :latest means
+    # the version depends on which node the pod landed on.
+    tag: "0.1.0"
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClass: longhorn
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 512Mi }
+  ingress:
+    enabled: false         # cluster-internal only; nothing outside needs this
+
+dindRunner:
+  enabled: true
+  replicaCount: 1
+  image:
+    tag: "0.1.0"
+  sandboxImage:
+    tag: "0.1.0"
+
+  dockerDataRoot:
+    # Inner image layers land here. An evicted runner takes every running
+    # sandbox with it, so the cap is deliberately not tiny — the sandbox image
+    # alone is most of a gigabyte.
+    #
+    # Flip to persistence for a volumeClaimTemplate per replica: survives a
+    # restart and skips re-pulling the sandbox image. Never share one
+    # /var/lib/docker across runner pods; dockerd needs exclusive access.
+    persistence:
+      enabled: false
+    emptyDirSizeLimit: 20Gi
+
+  resources:
+    requests: { cpu: 200m, memory: 512Mi }
+    limits: { memory: 4Gi }
+
+  # runtime.privileged: true and runtime.runtimeClassName: "" are the chart's
+  # dind defaults. The chart REJECTS the wrong combination at render time rather
+  # than producing a pod that starts and then fails every sandbox — so leaving
+  # these alone is correct, and overriding them fails loudly.
+
+# ── Restrict who can create sandboxes ────────────────────────────────────────
+# Off by default in the chart. Worth enabling: nothing but n8n should be reaching
+# this API.
+networkPolicy:
+  enabled: true
+  api:
+    httpIngressFrom:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: n8n
+
+# No Prometheus Operator in this cluster — the off-cluster Prometheus scrapes
+# /metrics through the API-server proxy instead. See docs/06-ops-host.md.
+monitoring:
+  serviceMonitor:
+    enabled: false

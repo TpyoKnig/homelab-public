@@ -284,6 +284,39 @@ kubectl -n flux-system get secret n8n-tofu-outputs \
 > (`cd iac/tofu/n8n && tofu init && tofu apply`) is entirely reasonable — just expect the
 > controller to reconcile over anything changed out-of-band once it owns it.
 
+### n8n sandbox service
+
+Deploy this **before** n8n points at it. Three prerequisites the chart cannot do for
+itself ([08-n8n-sandbox](docs/08-n8n-sandbox.md)):
+
+```bash
+kubectl create namespace n8n-sandbox
+# Without this, no runner pod is ever created and nothing obviously errors.
+kubectl label namespace n8n-sandbox \
+  pod-security.kubernetes.io/enforce=privileged \
+  pod-security.kubernetes.io/warn=privileged \
+  pod-security.kubernetes.io/audit=privileged
+
+# runner-api-key and runner-api-keys must hold the SAME value.
+RUNNER_KEY=$(openssl rand -hex 24)
+kubectl -n n8n-sandbox create secret generic sandbox-auth \
+  --from-literal=api-keys="$(openssl rand -hex 24)" \
+  --from-literal=runner-registration-token="$(openssl rand -hex 24)" \
+  --from-literal=runner-api-key="$RUNNER_KEY" \
+  --from-literal=runner-api-keys="$RUNNER_KEY"
+
+# A PRIVATE CA issuer for the four mTLS certificates — not letsencrypt-prod.
+kubectl apply -f iac/apps/n8n-sandbox/ca-issuer.yaml
+```
+
+Then push `iac/apps/n8n-sandbox/values.yaml` and `iac/argocd/app-n8n-sandbox.yaml` to the
+GitOps repo.
+
+✅ `kubectl -n n8n-sandbox logs deploy/n8n-sandbox-service-api | grep 'runner registered'`,
+then actually create a sandbox and run something in it — a runner that started is not a
+runner that works. Commands in
+[08-n8n-sandbox](docs/08-n8n-sandbox.md#verify).
+
 ### SearXNG and PR-Agent
 
 Push their Application manifests to the GitOps repo and let Argo take them.

@@ -1,0 +1,46 @@
+# n8n-sandbox-service — isolated code execution for the n8n AI Assistant.
+#
+# Chart source is the git repo at a TAG, not an OCI reference: the chart lives in
+# the repo at charts/n8n-sandbox-service and is published to
+# oci://ghcr.io/tpyoknig/n8n-sandbox-service only when the release workflow runs.
+# The tag always resolves. Swap sources[0] for the OCI form once you have
+# confirmed the version you want is published.
+#
+# Same two-source shape as every other app here: chart from upstream, values from
+# git. Bumping the service = bump targetRevision.
+#
+# Sync-wave 1: after cert-manager (the mTLS Certificates need an Issuer) and
+# before n8n, which points N8N_SANDBOX_SERVICE_URL at it.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: n8n-sandbox
+  namespace: argocd
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: n8n-sandbox
+  sources:
+    - repoURL: https://github.com/TpyoKnig/n8n-sandbox-service.git
+      targetRevision: "0.0.1"
+      path: charts/n8n-sandbox-service
+      helm:
+        releaseName: n8n-sandbox-service
+        valueFiles:
+          - $values/apps/n8n-sandbox/values.yaml
+    - repoURL: http://192.168.1.100:3001/<user>/homelab-gitops.git
+      targetRevision: main
+      ref: values
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions:
+      # CreateNamespace alone is NOT enough here — the namespace must also carry
+      # pod-security.kubernetes.io/enforce=privileged, or the runner StatefulSet
+      # is admitted and never produces a pod. Either label it by hand once, or
+      # ship a Namespace manifest with the labels in the -extras sibling app.
+      - CreateNamespace=true
+      - ServerSideApply=true

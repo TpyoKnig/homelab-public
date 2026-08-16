@@ -42,7 +42,7 @@ is still reachable, and the cluster can be rebuilt from it.
 | [docs/05-gitops.md](docs/05-gitops.md) | Forgejo + Argo CD + SOPS/age, and the app pattern |
 | [docs/06-ops-host.md](docs/06-ops-host.md) | Off-cluster observability, Forgejo, backups |
 | [docs/07-n8n.md](docs/07-n8n.md) | n8n Community via `terraform-kubernetes-n8n`, split ingress, driven from Argo |
-| [docs/08-n8n-sandbox.md](docs/08-n8n-sandbox.md) | `n8n-sandbox-service` for AI Assistant code execution |
+| [docs/08-n8n-sandbox.md](docs/08-n8n-sandbox.md) | `n8n-sandbox-service` for AI Assistant code execution, in `dind` mode |
 | [docs/09-searxng.md](docs/09-searxng.md) | Self-hosted metasearch, also the assistant's search backend |
 | [docs/10-pr-agent.md](docs/10-pr-agent.md) | AI code review on every Forgejo PR |
 | [iac/](iac/) | The OpenTofu roots, platform values, Argo manifests |
@@ -66,7 +66,7 @@ is still reachable, and the cluster can be rebuilt from it.
 ## Upstream repos used here
 
 - [`TpyoKnig/terraform-kubernetes-n8n`](https://github.com/TpyoKnig/terraform-kubernetes-n8n) — the n8n module (CNPG + Valkey + KEDA + split ingress)
-- [`TpyoKnig/n8n-sandbox-service`](https://github.com/TpyoKnig/n8n-sandbox-service) — isolated code-execution sandboxes for the n8n AI Assistant
+- [`TpyoKnig/n8n-sandbox-service`](https://github.com/TpyoKnig/n8n-sandbox-service) `0.0.1` — isolated code-execution sandboxes for the n8n AI Assistant. Its own Helm chart (0.3.0), in `dataPlane.mode: dind` — the mode that exists for immutable-rootfs distributions, verified on Talos v1.13.7
 
 ## Reading the placeholders
 
