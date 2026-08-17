@@ -16,10 +16,9 @@ module "n8n" {
   # latter only, so "TpyoKnig/n8n/kubernetes" fails here with "Module not found".
   # A git ref pins the same commit either way.
   #
-  # Pinned exactly, not to a range. Every release so far is a semver pre-release,
-  # and range constraints never match a pre-release: "~> 0.0" resolves to nothing
-  # at all rather than to this tag.
-  source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.0.1-beta.5"
+  # There is no `version` argument on a git source, so the ?ref= IS the pin and a
+  # range is not available here. Bumping it is a deliberate one-line commit.
+  source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.1.0"
 
   # ── Backing services ───────────────────────────────────────────────────────
   postgres_backend = "cnpg"

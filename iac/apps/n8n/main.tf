@@ -6,13 +6,13 @@
 #
 # ── Terraform, NOT OpenTofu ──────────────────────────────────────────────────
 # The registry `source` below resolves against registry.terraform.io, where this
-# module is published (0.0.1-beta.1 … 0.0.1-beta.5). OpenTofu resolves module
-# registry addresses against registry.opentofu.org instead, which returns 404
-# for this module — `tofu init` here fails with "Module not found".
+# module is published (0.1.0 is current). OpenTofu resolves module registry
+# addresses against registry.opentofu.org instead, which returns 404 for this
+# module — `tofu init` here fails with "Module not found".
 #
 # Under OpenTofu, swap the two source/version lines for a git ref:
 #
-#   source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.0.1-beta.5"
+#   source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.1.0"
 #
 # and drop `version`. Same commit, same result. That is what iac/tofu/n8n/ does.
 #
@@ -58,10 +58,10 @@ provider "kubectl" {
 }
 
 module "n8n" {
-  # Pin `version` EXACTLY. Every release so far is a semver pre-release, and
-  # range constraints never match a pre-release — `~> 0.0` resolves to nothing.
+  # `~> 0.1` takes patches and holds the minor. Still pre-1.0, so a minor bump
+  # may break the input surface; read the module CHANGELOG before widening this.
   source  = "TpyoKnig/n8n/kubernetes"
-  version = "0.0.1-beta.5"
+  version = "~> 0.1"
 
   n8n_domain = "n8n.example.com"
 
