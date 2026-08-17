@@ -51,8 +51,9 @@ is still reachable, and the cluster can be rebuilt from it.
 
 ### How `iac/` is organised
 
-Split by **how a thing is deployed**, not by what it is. That is why n8n is not
-under `apps/` — it has no chart and no values file.
+Split by **how a thing is deployed**, not by what it is. A workload with a Helm chart keeps
+its values under `apps/`; a workload deployed by OpenTofu keeps its root under `tofu/`.
+n8n appears in both, and the reason is explained under the table below.
 
 ```
 iac/
@@ -78,13 +79,21 @@ Which shape a workload takes depends on what upstream publishes:
 | Nothing (raw YAML) | Single-source Application: `path:` | `apps/<name>/*.yaml` | pr-agent |
 | A Terraform module | A `Terraform` CR run by tofu-controller | `tofu/<name>/*.tf` | n8n |
 
-**n8n has two entry points, and the difference is routing.**
-[`apps/n8n/`](iac/apps/n8n/) is a self-contained ~10-line module call sourced from the
-Terraform registry — `terraform apply` and you have queue-mode n8n with Postgres, Valkey
-and TLS. Start there. [`tofu/n8n/`](iac/tofu/n8n/) is what this lab actually runs: the same
-module with `create_ingress = false`, plus a caller-owned split ingress and an RWX volume.
-That exists because Community edition has no SSO, so authentication has to live at the
-ingress, and one hostname can't serve both an allowlisted editor and open webhooks.
+**n8n has two entry points, and the difference is routing, not packaging.** Both are the
+same module; publishing it to the Terraform registry is what made the short one possible.
+
+[`apps/n8n/`](iac/apps/n8n/) is a self-contained ten-line module call, `source` +
+`version` straight from the registry. `terraform apply` and you have queue-mode n8n with
+Postgres, Valkey and TLS. Start there.
+
+[`tofu/n8n/`](iac/tofu/n8n/) is what this lab actually runs: the same module with
+`create_ingress = false`, plus a caller-owned split ingress and an RWX volume. That exists
+because Community edition has no SSO, so authentication has to live at the ingress, and one
+hostname cannot serve both an allowlisted editor and open webhooks.
+
+Note that neither is a Helm Application. There is no chart and no `values.yaml` for n8n, so
+`apps/n8n/` holds `.tf` rather than values, and it is still OpenTofu or Terraform that
+applies it.
 
 ⚠️ The registry `source` form works under **Terraform** only. OpenTofu resolves module
 registry addresses against a different index that does not carry this module — use the
