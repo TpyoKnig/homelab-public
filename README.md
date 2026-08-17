@@ -91,9 +91,17 @@ Postgres, Valkey and TLS. Start there.
 because Community edition has no SSO, so authentication has to live at the ingress, and one
 hostname cannot serve both an allowlisted editor and open webhooks.
 
-Note that neither is a Helm Application. There is no chart and no `values.yaml` for n8n, so
-`apps/n8n/` holds `.tf` rather than values, and it is still OpenTofu or Terraform that
-applies it.
+Neither is a Helm Application, so `apps/n8n/` holds `.tf` where the other app directories
+hold `values.yaml`, and it is still OpenTofu or Terraform that applies it.
+
+That is a choice, not an absence. Upstream **does** publish a chart at
+[`n8n-io/n8n-hosting`](https://github.com/n8n-io/n8n-hosting/tree/main/charts/n8n), and it
+is a capable one: queue mode, workers, webhook processors, multi-main, KEDA. It expects
+Postgres and Redis to already exist though (`database.useExternal`, `redis.useExternal`),
+so the chart is one of three things you would have to assemble. The module provisions
+CloudNativePG and Valkey itself, which makes the whole workload a single `apply` and its
+version a single line in git. If you already run Postgres and Redis, the upstream chart is
+the more obvious path and this repo's `apps/` pattern would fit it unchanged.
 
 ⚠️ The registry `source` form works under **Terraform** only. OpenTofu resolves module
 registry addresses against a different index that does not carry this module — use the

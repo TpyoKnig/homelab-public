@@ -242,9 +242,17 @@ Postgres, Valkey for the queue, and KEDA scaling workers on queue depth instead 
 Binary data goes to an RWX volume on the NAS so any worker can read what any other worker
 wrote.
 
-It's deployed as a Terraform module rather than a Helm chart, my own
+It's deployed from my own Terraform module,
 [terraform-kubernetes-n8n](https://github.com/TpyoKnig/terraform-kubernetes-n8n), run by
 tofu-controller from inside the cluster. Version bumps are a one-line commit.
+
+n8n does publish [an official
+chart](https://github.com/n8n-io/n8n-hosting/tree/main/charts/n8n) and it handles queue
+mode, workers and KEDA perfectly well, so this isn't a gap I was filling. The difference is
+that the chart wants Postgres and Redis to already exist, so you're wiring up three things
+and keeping them in step. The module stands up CloudNativePG and Valkey alongside n8n, so
+the whole workload is one `apply`. If you already run Postgres and Redis in your cluster,
+use the chart.
 
 The ingress is split in two, and this is the part I'd have gotten wrong without running
 into it. n8n Community has no SSO, so authentication has to live at the ingress. Except
