@@ -85,7 +85,9 @@ This is the single most confusing part of the setup, so state it plainly:
 - **Tunnel routing has a wildcard.** `*.example.com` → ingress-nginx. Adding a service
   needs **no tunnel config change**.
 - **DNS has no wildcard.** Every hostname needs its own **proxied CNAME** to
-  `<TUNNEL_UUID>.cfargotunnel.com`, or traffic never reaches the tunnel at all.
+  `<TUNNEL_UUID>.cfargotunnel.com`, or traffic never reaches the tunnel at all. A wildcard
+  DNS record can exist, but *proxying* one is an Enterprise feature, and an unproxied
+  wildcard defeats the point.
 
 Check with `dig +short random-xyz.example.com @1.1.1.1` — it should be NXDOMAIN.
 

@@ -289,10 +289,12 @@ kubectl -n flux-system get secret n8n-tofu-outputs \
 ### n8n sandbox service
 
 **On Talos, deploy from [`TpyoKnig/n8n-sandbox-service`](https://github.com/TpyoKnig/n8n-sandbox-service)
-at tag `0.0.1`.** That tag's chart has `dataPlane.mode: dind`, which is the only mode that
-works on an immutable-rootfs distribution — the default `sysbox` mode needs a node runtime
-you cannot install on Talos (no shell, no package manager, read-only `/`), and its runner
-pod stays `Pending` forever with nothing explaining why. The chart is not published to any
+at tag `0.0.1`.** That tag's chart has `dataPlane.mode: dind`, which is the mode that keeps
+the whole thing in-cluster on an immutable-rootfs distribution — the default `sysbox` mode
+needs a node runtime you cannot install on Talos (no shell, no package manager, read-only
+`/`), and its runner pod stays `Pending` forever with nothing explaining why. The third
+mode, `external`, also installs here but deploys only the API and leaves you to run the
+runner elsewhere. The chart is not published to any
 registry, so the tag *is* the coordinate: `targetRevision: "0.0.1"`, path
 `charts/n8n-sandbox-service`. Full reasoning in [08-n8n-sandbox](docs/08-n8n-sandbox.md#why-dind-mode-on-talos).
 

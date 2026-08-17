@@ -15,7 +15,9 @@ support. No fork, no adapter, no shim.
 Manifests: [`iac/apps/pr-agent/`](../iac/apps/pr-agent/) (Namespace, Deployment, Service,
 and the SopsSecret template) and
 [`iac/argocd/app-pr-agent.yaml`](../iac/argocd/app-pr-agent.yaml). Upstream publishes no
-Helm chart, so this is the one workload here deployed from raw YAML by a **single-source**
+Helm chart for the open-source image (the commercial Qodo Merge on-prem product ships one
+as a tarball to its customers, which is a different thing), so this is the one workload
+here deployed from raw YAML by a **single-source**
 Argo Application rather than the two-source chart+values pattern.
 
 > Image naming changed at the handover. Old images are `codiumai/pr-agent:*` and stop at

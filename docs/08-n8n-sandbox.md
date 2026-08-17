@@ -12,9 +12,11 @@ Without it, the assistant loads and chats but every code execution fails.
 > targetRevision:  0.0.1
 > path:            charts/n8n-sandbox-service
 > ```
-> That tag ships `dataPlane.mode: dind`, the only mode installable on a node whose runtime
-> you cannot modify. The chart's default `sysbox` mode cannot work there at all — see
-> [Why `dind` mode on Talos](#why-dind-mode-on-talos).
+> That tag ships `dataPlane.mode: dind`, which is the mode to pick when you cannot modify
+> the node runtime. The chart's default `sysbox` mode cannot work there at all — see
+> [Why `dind` mode on Talos](#why-dind-mode-on-talos). (`external` mode installs on Talos
+> too, but it deploys only the API and expects the runner to run outside the chart, so it
+> moves the problem off-cluster rather than solving it here.)
 
 Pinned at the git tag **`0.0.1`** (commit `3a52ff8`), whose vendored chart declares
 `version: 0.3.0`, `appVersion: 0.1.0`. The chart is **not published to a registry** —
