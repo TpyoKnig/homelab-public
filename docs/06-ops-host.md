@@ -60,7 +60,10 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=30d
-      - --web.enable-remote-write-receiver     # Tempo pushes exemplars here
+      - --web.enable-remote-write-receiver     # Tempo's generator writes here
+      - --enable-feature=exemplar-storage      # ...and its exemplars, which are
+                                               # otherwise accepted and dropped
+      - --web.enable-lifecycle                 # POST /-/reload; 403 without it
     ports: ["127.0.0.1:9090:9090"]
     extra_hosts: ["host.docker.internal:host-gateway"]
     restart: unless-stopped
@@ -94,6 +97,32 @@ services:
 ```
 
 Chown the bind mounts to the container UIDs above (65534, 10001, 472) or nothing starts.
+
+### Scraping the stack itself
+
+`bootstrap-ops-host.sh` sets up `obs-loki` and `obs-grafana`, the two stack services it
+creates. Tempo is added later (compose block above), so **its scrape job has to be added
+by hand** — the bootstrap deliberately does not ship a job for a service that does not
+exist yet:
+
+```yaml
+# /opt/obs/prometheus.yml — add alongside obs-loki / obs-grafana
+- job_name: obs-tempo
+  static_configs: [{ targets: ['tempo:3200'] }]
+```
+
+Worth the two lines. Tempo's metrics-generator is what turns spans into the
+`traces_spanmetrics_*` series the node-latency dashboard reads, so if it stalls the
+dashboard goes flat with nothing else to warn you. The two to alert on:
+
+| Metric | Means |
+|---|---|
+| `tempo_metrics_generator_registry_active_series` | pinned at 0 → generation has stopped |
+| `tempo_metrics_generator_spans_discarded_total` | spans arriving but being dropped |
+
+Reload without a restart: `curl -X POST http://localhost:9090/-/reload`. That needs
+`--web.enable-lifecycle` on Prometheus (it is in the compose block above); without it
+the endpoint answers 403 `Lifecycle API is not enabled.`
 
 ### Scraping the cluster from outside
 
@@ -298,6 +327,31 @@ prompts at import time.
 
 Loki's default is **never expire**. Set this on day one, not after the disk fills.
 
+## Prebuilt Explore queries
+
+Dashboards cover what you watch continuously. Explore is for the follow-up question,
+and by default it opens empty, so everyone retypes TraceQL from memory.
+
+Grafana 11.3 has no shareable query library — that arrived in later releases. What it
+does have is per-user query history with a starred flag and an API to write to it, which
+is enough. [`scripts/seed-explore-queries.py`](../scripts/seed-explore-queries.py) seeds
+14 labelled, starred queries across Prometheus, Tempo and Loki:
+
+```bash
+GF_PASS="$GF_SECURITY_ADMIN_PASSWORD" ./scripts/seed-explore-queries.py
+# then: Explore -> Query history -> Starred
+```
+
+It looks datasources up by **name**, not UID, so it works against a Grafana whose
+datasources were created through the UI and carry random UIDs. It is idempotent: entries
+are matched on their label, and a label that already exists is PATCHed in place rather
+than recreated — so editing a query in the script does reach the entry you see in
+Explore, and the entry keeps its uid. `--dry-run` prints what it would do.
+
+The one real limitation: **query history is per user.** Seeding as `admin` gives the
+queries to `admin` only. On a single-operator box that is a non-issue; with a team, run
+it per login or accept it as an admin convenience.
+
 ## Forgejo
 
 ```yaml
@@ -378,6 +432,23 @@ bite you:
 - **`--delete` is what propagates retention** to the NAS. Drop it and the NAS grows
   forever. Conversely, never point another system's backup target *inside* a tree that a
   `--delete` mirror owns.
+- **Back up Grafana's SQLite, and back up every config the stack reads — not just the
+  ones you remember writing.** The self-backup listed `/opt/obs/{.env,prometheus.yml,
+  compose.yaml}` by name, which quietly excluded `tempo.yaml` — the file holding the
+  span-metric dimensions the tracing dashboard is built on — and `loki-config.yaml`.
+  `/mnt/data/grafana/grafana.db` was missing entirely, and it is the only copy of the
+  datasource UIDs every UI-created dashboard binds to, plus Explore's starred queries.
+  Dashboards are re-importable from git; the UIDs they bind to are not.
+
+  Snapshot SQLite properly rather than copying it. Grafana is running, so `cp` can catch
+  a torn write mid-transaction:
+
+  ```bash
+  sqlite3 /mnt/data/grafana/grafana.db ".backup '/opt/obs/grafana.db.snapshot'"
+  ```
+
+  Verify by counting rows in the snapshot, not by checking the file exists —
+  `select count(*) from dashboard;` should match what Grafana shows.
 
 Two copies: NAS (copy 1) and local disk (copy 2). Both scripts check `mountpoint -q`
 first and warn to stderr rather than syncing into an empty mount point.

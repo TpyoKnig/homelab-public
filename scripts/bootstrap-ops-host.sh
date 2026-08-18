@@ -14,9 +14,10 @@
 #                              Empty (the default) skips that step entirely.
 #   NAS_EXPORT=<ip>:<path>     NFS backup share. Empty skips the fstab entry.
 #
-# This is the PRE-CLUSTER state: Prometheus scrapes only itself and the host
-# node-exporter. Once the cluster exists, append the kubernetes_sd block and add
-# the Tempo service — see docs/06-ops-host.md.
+# This is the PRE-CLUSTER state: Prometheus scrapes itself, the host
+# node-exporter, and the two stack services this script starts (Loki, Grafana).
+# Once the cluster exists, append the kubernetes_sd block and add the Tempo
+# service plus its scrape job — see docs/06-ops-host.md.
 
 set -euo pipefail
 
@@ -118,7 +119,17 @@ scrape_configs:
     static_configs: [{ targets: ['localhost:9090'] }]
   - job_name: node-exporter-pi
     static_configs: [{ targets: ['host.docker.internal:9100'] }]
-# When the cluster exists, append the k8s SD block from 06-Ops-Host.md.
+  # The observability stack watching itself. Only the two services this script
+  # actually creates — adding a Tempo job here would leave a permanently down
+  # target, because Tempo is not part of the pre-cluster compose below.
+  - job_name: obs-loki
+    static_configs: [{ targets: ['loki:3100'] }]
+  - job_name: obs-grafana
+    static_configs: [{ targets: ['grafana:3000'] }]
+# When the cluster exists, append the k8s SD block from docs/06-ops-host.md. That
+# doc also adds the Tempo service; its obs-tempo scrape job is NOT created by
+# this script and has to be added by hand — see "Scraping the stack itself"
+# there for the two lines and why Tempo is the one worth scraping.
 YAML
 
 # --- grafana admin password (generate once, keep across re-runs) ---
@@ -145,6 +156,13 @@ services:
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=30d
       - --web.enable-lifecycle
+      # Accepts the span metrics Tempo's metrics-generator remote-writes.
+      # See iac/platform/tempo-metrics-generator.yaml.
+      - --web.enable-remote-write-receiver
+      # Stores the exemplars attached to those series. Without it they are
+      # accepted and silently dropped, and a latency spike has no clickable
+      # link to the trace behind it.
+      - --enable-feature=exemplar-storage
     ports: ["127.0.0.1:9090:9090"]
     extra_hosts: ["host.docker.internal:host-gateway"]
     restart: unless-stopped

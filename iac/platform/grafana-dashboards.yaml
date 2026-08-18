@@ -36,6 +36,13 @@ providers:
 # | n8n-full-observability                 | —     | Prometheus | Original. 30 panels over every metric
 # |                                        |       |            | group n8n can emit; needs the 19
 # |                                        |       |            | N8N_METRICS_INCLUDE_* flags on
+# | n8n-node-latency-tracing               | —     | Prometheus | Original. Per-NODE latency, which no
+# |                                        |       |            | n8n metric exposes. Reads the
+# |                                        |       |            | traces_spanmetrics_* series Tempo's
+# |                                        |       |            | metrics-generator derives from n8n's
+# |                                        |       |            | OpenTelemetry spans, so it needs
+# |                                        |       |            | N8N_OTEL_ENABLED plus
+# |                                        |       |            | tempo-metrics-generator.yaml
 #
 # Attribution, the two gotchas that make the Kubernetes dashboards render, and
 # why the datasource UIDs in these files were rewritten: dashboards/README.md.
