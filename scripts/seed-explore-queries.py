@@ -14,8 +14,11 @@ Caveats worth knowing before you rely on this:
     belongs on a dashboard; Explore is for the ad-hoc follow-up.
 
 Idempotent: entries are matched by their label, so re-running never duplicates.
-A label that already exists is PATCHed in place, so editing a query in QUERIES
-does reach the entry the user sees, and the uid survives.
+An unchanged entry is left alone (and re-starred if it was un-starred). Edit a
+query in QUERIES and the next run replaces that entry, because Grafana's
+PATCH /api/query-history/{uid} updates the comment only — it accepts a body
+containing queries and ignores it. Replacing means delete + recreate, so the
+entry gets a new uid; there is no API that edits a stored query in place.
 
 Usage:
     GF_URL=http://localhost:3000 GF_USER=admin GF_PASS=... ./seed-explore-queries.py
@@ -154,7 +157,7 @@ def api(path, method="GET", body=None):
 
 
 def fetch_seeded():
-    """Map comment -> uid for everything this script has previously written.
+    """Map label -> the full existing entry for everything this script wrote.
 
     Reads the FULL history rather than only starred entries. An entry created
     but not yet starred (interrupted run) or later un-starred by hand is still
@@ -171,8 +174,19 @@ def fetch_seeded():
             return seeded
         for e in rows:
             if e.get("comment"):
-                seeded.setdefault(e["comment"], e["uid"])
+                seeded.setdefault(e["comment"], e)
         page += 1
+
+
+def same_query(entry, ds_uid, query):
+    """Whether a stored entry already holds exactly the query we want."""
+    stored = entry.get("queries") or []
+    if entry.get("datasourceUid") != ds_uid or len(stored) != 1:
+        return False
+    # Grafana echoes back the keys it stored, and may add its own (datasource,
+    # editorMode, ...). Compare only the keys we set, so an untouched entry is
+    # not rewritten on every run purely because Grafana enriched it.
+    return all(stored[0].get(k) == v for k, v in query.items())
 
 
 def main():
@@ -199,30 +213,57 @@ def main():
     except ApiError as e:
         sys.exit(f"Could not read query history: {e}")
 
-    created = refreshed = 0
+    def create(ds_uid, comment, query):
+        uid = api("/api/query-history", "POST",
+                  {"dataSourceUid": ds_uid, "queries": [query]}).get("result", {}).get("uid")
+        if not uid:
+            raise ApiError(f"create returned no uid for: {comment}")
+        api(f"/api/query-history/star/{uid}", "POST")
+        # The label has to be a separate PATCH: the create endpoint takes no
+        # comment field.
+        api(f"/api/query-history/{uid}", "PATCH", {"comment": comment})
+
+    created = replaced = unchanged = 0
     try:
         for ds_name, comment, query in QUERIES:
-            payload = {"dataSourceUid": uid_by_name[ds_name], "queries": [query]}
-            if comment in existing:
-                # Refresh in place. Editing a query in QUERIES has to reach the
-                # entry the user actually sees, and PATCHing keeps the uid, so
-                # any bookmark pointing at it still resolves.
-                api(f"/api/query-history/{existing[comment]}", "PATCH",
-                    {"comment": comment, **payload})
-                print(f"  ~ {ds_name:11} {comment}")
-                refreshed += 1
-                continue
-            uid = api("/api/query-history", "POST", payload).get("result", {}).get("uid")
-            if not uid:
-                raise ApiError(f"create returned no uid for: {comment}")
-            api(f"/api/query-history/star/{uid}", "POST")
-            api(f"/api/query-history/{uid}", "PATCH", {"comment": comment})
-            print(f"  + {ds_name:11} {comment}")
-            created += 1
-    except ApiError as e:
-        sys.exit(f"\nAborted after {created} created / {refreshed} refreshed.\n{e}")
+            ds_uid = uid_by_name[ds_name]
+            entry = existing.get(comment)
 
-    print(f"\n{created} created, {refreshed} refreshed. "
+            if entry is None:
+                create(ds_uid, comment, query)
+                print(f"  + {ds_name:11} {comment}")
+                created += 1
+                continue
+
+            if same_query(entry, ds_uid, query):
+                # Nothing to change. Re-star it though: an entry the user
+                # un-starred (or one left behind by a run interrupted between
+                # create and star) is invisible in Explore -> Starred, and
+                # skipping it entirely would leave it that way forever.
+                if not entry.get("starred"):
+                    api(f"/api/query-history/star/{entry['uid']}", "POST")
+                    print(f"  * {ds_name:11} {comment}  (re-starred)")
+                else:
+                    print(f"  = {ds_name:11} {comment}")
+                unchanged += 1
+                continue
+
+            # The stored query differs, so the script's copy has been edited.
+            # Delete and recreate rather than PATCH: Grafana's
+            # PATCH /api/query-history/{uid} updates the COMMENT only — it
+            # accepts a body with queries and silently ignores it, which makes
+            # a PATCH-based "refresh" look like it worked while changing
+            # nothing. Recreating costs the entry its uid; there is no API that
+            # edits a stored query in place.
+            api(f"/api/query-history/{entry['uid']}", "DELETE")
+            create(ds_uid, comment, query)
+            print(f"  ~ {ds_name:11} {comment}  (query changed, recreated)")
+            replaced += 1
+    except ApiError as e:
+        sys.exit(f"\nAborted after {created} created / {replaced} recreated / "
+                 f"{unchanged} left alone.\n{e}")
+
+    print(f"\n{created} created, {replaced} recreated, {unchanged} unchanged. "
           f"Explore -> Query history -> Starred.")
 
 

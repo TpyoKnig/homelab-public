@@ -126,11 +126,10 @@ scrape_configs:
     static_configs: [{ targets: ['loki:3100'] }]
   - job_name: obs-grafana
     static_configs: [{ targets: ['grafana:3000'] }]
-# When the cluster exists, append the k8s SD block from 06-Ops-Host.md — and
-# the obs-tempo job alongside the Tempo service, which the same doc adds.
-# Scraping Tempo matters more than it looks: its metrics-generator is what turns
-# spans into the traces_spanmetrics_* series the tracing dashboard reads, so if
-# it stalls the dashboard just goes flat.
+# When the cluster exists, append the k8s SD block from 06-Ops-Host.md. That
+# doc also adds the Tempo service; its obs-tempo scrape job is NOT created by
+# this script and has to be added by hand — see "Scraping the stack itself"
+# there for the two lines and why Tempo is the one worth scraping.
 YAML
 
 # --- grafana admin password (generate once, keep across re-runs) ---

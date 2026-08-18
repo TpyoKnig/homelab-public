@@ -95,6 +95,30 @@ services:
 
 Chown the bind mounts to the container UIDs above (65534, 10001, 472) or nothing starts.
 
+### Scraping the stack itself
+
+`bootstrap-ops-host.sh` sets up `obs-loki` and `obs-grafana`, the two stack services it
+creates. Tempo is added later (compose block above), so **its scrape job has to be added
+by hand** — the bootstrap deliberately does not ship a job for a service that does not
+exist yet:
+
+```yaml
+# /opt/obs/prometheus.yml — add alongside obs-loki / obs-grafana
+- job_name: obs-tempo
+  static_configs: [{ targets: ['tempo:3200'] }]
+```
+
+Worth the two lines. Tempo's metrics-generator is what turns spans into the
+`traces_spanmetrics_*` series the node-latency dashboard reads, so if it stalls the
+dashboard goes flat with nothing else to warn you. The two to alert on:
+
+| Metric | Means |
+|---|---|
+| `tempo_metrics_generator_registry_active_series` | pinned at 0 → generation has stopped |
+| `tempo_metrics_generator_spans_discarded_total` | spans arriving but being dropped |
+
+Reload without a restart: `curl -X POST http://localhost:9090/-/reload`.
+
 ### Scraping the cluster from outside
 
 Discovery via the Kubernetes API, scraping through the **API-server proxy**. One bearer

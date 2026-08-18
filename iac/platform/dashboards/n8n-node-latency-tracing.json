@@ -309,7 +309,7 @@
         {
           "refId": "B",
           "expr": "histogram_quantile(0.95, sum by (le) (rate(traces_spanmetrics_latency_bucket{service=~\"$service\", span_name=\"node.execute\"}[$__rate_interval])))",
-          "legendFormat": "node.execute p95 (any single node)",
+          "legendFormat": "node.execute p95 (all nodes pooled)",
           "exemplar": true
         }
       ]
