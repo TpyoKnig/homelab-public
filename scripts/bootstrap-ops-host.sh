@@ -145,6 +145,13 @@ services:
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=30d
       - --web.enable-lifecycle
+      # Accepts the span metrics Tempo's metrics-generator remote-writes.
+      # See iac/platform/tempo-metrics-generator.yaml.
+      - --web.enable-remote-write-receiver
+      # Stores the exemplars attached to those series. Without it they are
+      # accepted and silently dropped, and a latency spike has no clickable
+      # link to the trace behind it.
+      - --enable-feature=exemplar-storage
     ports: ["127.0.0.1:9090:9090"]
     extra_hosts: ["host.docker.internal:host-gateway"]
     restart: unless-stopped

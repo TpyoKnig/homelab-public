@@ -1,0 +1,56 @@
+# Tempo metrics-generator — the fragment that turns n8n spans into Prometheus series.
+#
+# Merge these blocks into your tempo.yaml (Tempo 2.6.x). Without the generator you
+# can read individual traces but cannot graph or alert on them; with it, every span
+# becomes RED metrics (`traces_spanmetrics_*`) remote-written into Prometheus.
+#
+# Pair with docs/07-n8n.md (N8N_OTEL_* settings) and the
+# dashboards/n8n-node-latency-tracing.json dashboard that queries these series.
+
+metrics_generator:
+  registry:
+    # Stamped onto every generated series, so they are distinguishable from
+    # metrics Prometheus scraped directly.
+    external_labels: { source: tempo, cluster: talos-lab }
+  storage:
+    path: /var/tempo/generator
+    remote_write:
+      - url: http://prometheus:9090/api/v1/write
+        # Exemplars are what let a Grafana latency panel link straight to the
+        # trace behind a spike. Requires --enable-feature=exemplar-storage on
+        # Prometheus and --web.enable-remote-write-receiver.
+        send_exemplars: true
+  traces_storage:
+    path: /var/tempo/generator/traces
+
+overrides:
+  defaults:
+    metrics_generator:
+      processors: [service-graphs, span-metrics]
+
+      # Promote n8n node identity onto the generated span metrics. Without this
+      # the generator only emits span_name="node.execute", which tells you a node
+      # was slow but not which one — and that is usually the whole question.
+      #
+      # node.type alone is NOT enough. A Code node is n8n-nodes-base.code whether
+      # it runs on the JavaScript runner or the Python one, and n8n puts no
+      # language or runner attribute on the span. node.name is the only thing
+      # that separates them, and the difference is large: on this lab, roughly
+      # 61 ms versus 1,193 ms mean for the same node type.
+      #
+      # node.name is author-controlled and therefore unbounded, unlike the closed
+      # set of node types. That is an acceptable trade at lab scale and a bad one
+      # at real scale — on a busy instance drop node.name and use TraceQL for the
+      # per-node breakdown rather than paying the cardinality in Prometheus.
+      #
+      # Note the nesting: `processor` (singular) under `metrics_generator`, next
+      # to `processors` (plural). Getting it wrong does not produce a useful
+      # error — Tempo falls back to legacy overrides parsing and reports
+      # "field defaults not found in type overrides.legacyConfig", pointing at a
+      # completely different line. Validate config changes in a throwaway
+      # container before restarting the real one.
+      processor:
+        span_metrics:
+          dimensions:
+            - n8n.node.type
+            - n8n.node.name

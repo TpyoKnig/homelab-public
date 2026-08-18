@@ -57,6 +57,57 @@ confidently wrong numbers:
 It uses a `DS_PROMETHEUS` datasource-type variable rather than a fixed UID, so
 unlike the exports described below it binds correctly on any Grafana.
 
+## n8n-node-latency-tracing, and why metrics alone could not do this
+
+`n8n-node-latency-tracing.json` is the one dashboard here that is not built on n8n's
+own metrics, because n8n's own metrics cannot answer the question it asks.
+
+Prometheus stops at the workflow boundary. `n8n_workflow_execution_duration_seconds`
+will tell you an execution took 8 seconds and nothing about where the 8 seconds went,
+and there are **no task-runner metrics at all** — `dist/metrics/prometheus/` holds 23
+metric services and none of them is about runners. So a Code node sitting 7.8 s waiting
+for a Python task runner shows up as an 8 s workflow and nothing more.
+
+n8n does ship the answer, switched off. It has an OpenTelemetry module that emits a
+`node.execute` span per node, and it is **not a licensed feature** — module gating is
+the `licenseFlag` property on the `@BackendModule` decorator, which `log-streaming`,
+`ldap` and `source-control` all carry and `otel` does not. It is already in the module
+registry's `defaultModules`, so it loads on every start; `N8N_OTEL_ENABLED=false` is
+the only thing stopping it. It declares `instanceTypes: ['main','worker','webhook']`,
+which matters, because the worker is what actually runs the node.
+
+The chain is: n8n emits spans → Tempo ingests them → Tempo's metrics-generator converts
+them to `traces_spanmetrics_*` and remote-writes to Prometheus → this dashboard queries
+those series. So it needs `../tempo-metrics-generator.yaml` and the `N8N_OTEL_*`
+settings in `docs/07-n8n.md`; without both, its panels are empty.
+
+**The gotcha worth stealing:** a Code node is `n8n-nodes-base.code` whether it runs on
+the JavaScript runner or the Python one, and n8n puts no language attribute on the span.
+Only the node *name* separates them, which is why `n8n.node.name` is promoted to a metric
+dimension. On this lab that split is 61 ms versus 1,193 ms mean for the same node type —
+the single most useful number on the dashboard, and invisible without that dimension.
+
+Node name is author-controlled and unbounded. Fine at lab scale, wrong at real scale;
+drop it and use TraceQL there.
+
+It carries its own trace panel, so the span waterfall is on the dashboard rather than
+in Explore: the bottom table runs a TraceQL query (`{name="workflow.execute" && duration
+> $min_duration}`) against Tempo, and a row opens the waterfall that shows which node
+held the execution.
+
+The latency panels also emit **exemplars**, so a spike links straight to the trace that
+caused it. Three things have to line up for that, and it fails silently if any is
+missing:
+
+| Where | What |
+|---|---|
+| `tempo.yaml` | `remote_write: send_exemplars: true` |
+| Prometheus | `--enable-feature=exemplar-storage` — without it, exemplars are accepted and dropped |
+| Prometheus datasource | `exemplarTraceIdDestinations` pointing at the Tempo datasource |
+
+Like `n8n-full-observability`, this one uses a `${datasource}` variable rather than a
+fixed UID, so it binds on any Grafana. `${tracesource}` does the same for Tempo.
+
 ## Variables are discovered, not hardcoded
 
 The n8n dashboards select their target through **query variables** that read the

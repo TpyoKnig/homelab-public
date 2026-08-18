@@ -1,0 +1,436 @@
+{
+  "title": "n8n — Node & Task Runner Latency",
+  "uid": "n8n-node-latency",
+  "tags": [
+    "n8n",
+    "tracing",
+    "task-runner"
+  ],
+  "timezone": "browser",
+  "editable": true,
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": {
+    "from": "now-3h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0
+      },
+      {
+        "name": "tracesource",
+        "label": "Tempo",
+        "type": "datasource",
+        "query": "tempo",
+        "current": {},
+        "hide": 0
+      },
+      {
+        "name": "service",
+        "label": "n8n instance",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": "label_values(traces_spanmetrics_latency_count{span_name=\"node.execute\"}, service)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": {}
+      },
+      {
+        "name": "min_duration",
+        "label": "Slower than",
+        "type": "custom",
+        "query": "200ms,500ms,1s,2s,5s",
+        "current": {
+          "text": "1s",
+          "value": "1s"
+        },
+        "options": [
+          {
+            "text": "200ms",
+            "value": "200ms",
+            "selected": false
+          },
+          {
+            "text": "500ms",
+            "value": "500ms",
+            "selected": false
+          },
+          {
+            "text": "1s",
+            "value": "1s",
+            "selected": true
+          },
+          {
+            "text": "2s",
+            "value": "2s",
+            "selected": false
+          },
+          {
+            "text": "5s",
+            "value": "5s",
+            "selected": false
+          }
+        ]
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "text",
+      "title": "What this dashboard is for",
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "n8n's Prometheus metrics stop at the **workflow** boundary. `n8n_workflow_execution_duration_seconds` will tell you an execution took 8 seconds and nothing about where the 8 seconds went, and there are **no task-runner metrics at all** — no `task-runner-metrics.service.js` exists alongside the other 23 in `dist/metrics/prometheus/`.\n\nEverything below is derived from OpenTelemetry spans instead: n8n emits a `node.execute` span per node (`N8N_OTEL_ENABLED`), Tempo's metrics-generator converts those spans into RED metrics and remote-writes them to Prometheus. That is what makes per-node latency queryable and alertable.\n\n**The catch worth knowing:** a Code node is `n8n-nodes-base.code` whether it runs on the JavaScript runner or the Python one, and n8n puts no language attribute on the span. The only thing separating them is the node *name*, which is why `n8n.node.name` is promoted to a metric dimension in `tempo.yaml`."
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Node p95 latency by node type",
+      "description": "The attribution Prometheus alone cannot give you. Spikes here name the node type responsible for a slow workflow.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (n8n_node_type, le) (rate(traces_spanmetrics_latency_bucket{service=~\"$service\", span_name=\"node.execute\", n8n_node_type!=\"\"}[$__rate_interval])))",
+          "legendFormat": "{{n8n_node_type}}",
+          "exemplar": true
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Code node latency — JavaScript runner vs Python runner",
+      "description": "Mean seconds per Code node execution, split by node name because node type cannot distinguish the two runners. The Python runner is a single GIL-bound process with DEFAULT_MAX_CONCURRENCY = 5; the JS runner allows 10.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (n8n_node_name) (rate(traces_spanmetrics_latency_sum{service=~\"$service\", n8n_node_type=\"n8n-nodes-base.code\"}[$__rate_interval])) / sum by (n8n_node_name) (rate(traces_spanmetrics_latency_count{service=~\"$service\", n8n_node_type=\"n8n-nodes-base.code\"}[$__rate_interval]))",
+          "legendFormat": "{{n8n_node_name}}"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Slowest node types (mean over range)",
+      "description": "Sorted worst first. Use this to decide what to look at in Tempo.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "calls/sec"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "reqps"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "sortBy": [
+          {
+            "displayName": "mean",
+            "desc": true
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "instant": true,
+          "expr": "sum by (n8n_node_type, n8n_node_name) (rate(traces_spanmetrics_latency_sum{service=~\"$service\", span_name=\"node.execute\", n8n_node_type!=\"\"}[$__range])) / sum by (n8n_node_type, n8n_node_name) (rate(traces_spanmetrics_latency_count{service=~\"$service\", span_name=\"node.execute\", n8n_node_type!=\"\"}[$__range]))",
+          "legendFormat": "mean"
+        },
+        {
+          "refId": "B",
+          "format": "table",
+          "instant": true,
+          "expr": "sum by (n8n_node_type, n8n_node_name) (rate(traces_spanmetrics_calls_total{service=~\"$service\", span_name=\"node.execute\", n8n_node_type!=\"\"}[$__range]))",
+          "legendFormat": "calls/sec"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "n8n_node_type": "node type",
+              "n8n_node_name": "node name",
+              "Value #A": "mean",
+              "Value #B": "calls/sec"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Workflow p95 vs summed node time",
+      "description": "The gap between the two is time the workflow spent somewhere other than inside a node — queue wait, data transfer, orchestration. A widening gap is a queue-mode problem, not a node problem.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(traces_spanmetrics_latency_bucket{service=~\"$service\", span_name=\"workflow.execute\"}[$__rate_interval])))",
+          "legendFormat": "workflow.execute p95",
+          "exemplar": true
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(traces_spanmetrics_latency_bucket{service=~\"$service\", span_name=\"node.execute\"}[$__rate_interval])))",
+          "legendFormat": "node.execute p95 (slowest single node)",
+          "exemplar": true
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Node executions per second by type",
+      "description": "Throughput, for reading the latency panels in context — a p95 spike on two calls is noise.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 60,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "sum"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (n8n_node_type) (rate(traces_spanmetrics_calls_total{service=~\"$service\", span_name=\"node.execute\", n8n_node_type!=\"\"}[$__rate_interval]))",
+          "legendFormat": "{{n8n_node_type}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Node errors per second by type",
+      "description": "Span status, not HTTP status. A node that fails fast will not show up in the latency panels at all.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 60
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "sum"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (n8n_node_type) (rate(traces_spanmetrics_calls_total{service=~\"$service\", span_name=\"node.execute\", status_code=\"STATUS_CODE_ERROR\"}[$__rate_interval]))",
+          "legendFormat": "{{n8n_node_type}}"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Slow executions — click a row for the span waterfall",
+      "description": "Queries Tempo directly rather than the derived metrics. This is where the per-node breakdown lives: the row opens the trace, the trace shows which node held the execution and for how long.",
+      "datasource": {
+        "type": "tempo",
+        "uid": "${tracesource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 23
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "traceql",
+          "query": "{name=\"workflow.execute\" && duration > $min_duration}",
+          "limit": 50
+        }
+      ],
+      "options": {
+        "sortBy": [
+          {
+            "displayName": "Duration",
+            "desc": true
+          }
+        ]
+      }
+    }
+  ]
+}
