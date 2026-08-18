@@ -1366,8 +1366,8 @@
       {
         "current": {
           "selected": true,
-          "text": "n8n-test",
-          "value": "n8n-test"
+          "text": "n8n-local (prod)",
+          "value": "k8s-n8n"
         },
         "hide": 0,
         "includeAll": false,
@@ -1376,17 +1376,12 @@
         "name": "instance",
         "options": [
           {
-            "selected": false,
+            "selected": true,
             "text": "n8n-local (prod)",
             "value": "k8s-n8n"
-          },
-          {
-            "selected": true,
-            "text": "n8n-test",
-            "value": "n8n-test"
           }
         ],
-        "query": "n8n-local (prod) : k8s-n8n,n8n-test : n8n-test",
+        "query": "n8n-local (prod) : k8s-n8n",
         "type": "custom"
       },
       {

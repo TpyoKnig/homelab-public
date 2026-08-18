@@ -1768,7 +1768,7 @@
         "type": "grafana-postgresql-datasource",
         "uid": "n8n-postgres"
       },
-      "description": "Same as n8n-test panel \u2014 broader status filter so status=running rows appear.",
+      "description": "Broader status filter so status=running rows appear.",
       "fieldConfig": {
         "defaults": {
           "custom": {
