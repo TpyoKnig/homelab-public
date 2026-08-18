@@ -193,10 +193,14 @@ def same_query(entry, ds_uid, query):
     stored = entry.get("queries") or []
     if entry.get("datasourceUid") != ds_uid or len(stored) != 1:
         return False
-    # Compare both directions across the managed keys. Checking only the keys
-    # in `query` would miss a REMOVED field: drop `limit` from a QUERIES entry
-    # and the stored copy still carries it, yet every desired key matches, so
-    # the edit would never be applied.
+    # Compare both directions, but only across MANAGED_KEYS. Checking just the
+    # keys present in `query` would miss a REMOVED one: drop `queryType` from a
+    # QUERIES entry and the stored copy still carries it, yet every remaining
+    # desired key matches, so the edit would never be applied.
+    #
+    # The reverse check only sees keys in MANAGED_KEYS. Removing a key outside
+    # that set — `limit`, say — changes nothing here and triggers no recreate,
+    # which is correct: Grafana never stored it, so there is nothing to undo.
     return {k: v for k, v in stored[0].items() if k in MANAGED_KEYS} == \
            {k: v for k, v in query.items() if k in MANAGED_KEYS}
 

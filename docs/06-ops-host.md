@@ -63,7 +63,7 @@ services:
       - --web.enable-remote-write-receiver     # Tempo's generator writes here
       - --enable-feature=exemplar-storage      # ...and its exemplars, which are
                                                # otherwise accepted and dropped
-      - --web.enable-lifecycle                 # POST /-/reload; 401 without it
+      - --web.enable-lifecycle                 # POST /-/reload; 403 without it
     ports: ["127.0.0.1:9090:9090"]
     extra_hosts: ["host.docker.internal:host-gateway"]
     restart: unless-stopped
@@ -122,7 +122,7 @@ dashboard goes flat with nothing else to warn you. The two to alert on:
 
 Reload without a restart: `curl -X POST http://localhost:9090/-/reload`. That needs
 `--web.enable-lifecycle` on Prometheus (it is in the compose block above); without it
-the endpoint answers 401 `Lifecycle API is not enabled`.
+the endpoint answers 403 `Lifecycle API is not enabled.`
 
 ### Scraping the cluster from outside
 
