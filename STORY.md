@@ -378,10 +378,15 @@ matched zero interfaces.
 behind the VIP bounces, so talosctl hangs on the final kubelet-restart check even though the
 upgrade already finished. Point `talosconfig` at a specific node IP for upgrades.
 
-**OpenTofu and Terraform don't share a module registry.** I publish the n8n module to the
-Terraform registry, so `source = "TpyoKnig/n8n/kubernetes"` works under Terraform and fails
-with `Module not found` under OpenTofu. Same syntax, different index. Under OpenTofu you
-need the `git::...?ref=` form.
+**OpenTofu and Terraform don't share a module registry.** I published the n8n module to the
+Terraform registry, so `source = "TpyoKnig/n8n/kubernetes"` worked under Terraform and failed
+with `Module not found` under OpenTofu. Same syntax, different index, and a config that's
+correct but looks broken. I ran the `git::...?ref=` form for a while and then submitted to
+OpenTofu's registry too. Their automation validated it, pushed its branch, and then died on
+the final `gh pr create` during a GitHub API outage, which left an orphaned branch that every
+retry afterwards failed to fast-forward past. Editing the issue didn't re-fire it either. It
+sat for three days until a maintainer opened the PR by hand. Publishing to one index buys you
+nothing on the other, so check which one your binary is asking before you go rewriting config.
 
 **The NAS wouldn't do NFSv4.** No export carried `fsid=0`, so there's no v4 pseudo-root and
 only v3 mounts work. Longhorn's NFS backup driver mounts `-t nfs4` with no fallback and no

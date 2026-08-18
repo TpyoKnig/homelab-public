@@ -9,16 +9,16 @@
 # bring-up or a debugging session.
 
 module "n8n" {
-  # Git source, not the registry address the module's README shows.
+  # Registry source. Works under OpenTofu since 2026-08-17, when the module was
+  # published to registry.opentofu.org — a separate index from HashiCorp's
+  # registry.terraform.io, which is why this was a git::...?ref= URL before then
+  # and why the README's own source line used to fail here with "Module not
+  # found" on a config that was correct.
   #
-  # OpenTofu resolves registry modules against registry.opentofu.org, a different
-  # index from HashiCorp's registry.terraform.io. The module is published to the
-  # latter only, so "TpyoKnig/n8n/kubernetes" fails here with "Module not found".
-  # A git ref pins the same commit either way.
-  #
-  # There is no `version` argument on a git source, so the ?ref= IS the pin and a
-  # range is not available here. Bumping it is a deliberate one-line commit.
-  source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.1.0"
+  # ~> 0.1.0 is patch-only (>= 0.1.0, < 0.2.0). Not `~> 0.1`, which would also
+  # accept 0.2.0 — pre-1.0 minors are where this module can still break inputs.
+  source  = "TpyoKnig/n8n/kubernetes"
+  version = "~> 0.1.0"
 
   # ── Backing services ───────────────────────────────────────────────────────
   postgres_backend = "cnpg"

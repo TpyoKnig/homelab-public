@@ -4,17 +4,15 @@
 # a working queue-mode n8n with CNPG Postgres, Valkey and a TLS ingress. Nothing
 # else in this repo is required.
 #
-# ── Terraform, NOT OpenTofu ──────────────────────────────────────────────────
-# The registry `source` below resolves against registry.terraform.io, where this
-# module is published (0.1.0 is current). OpenTofu resolves module registry
-# addresses against registry.opentofu.org instead, which returns 404 for this
-# module — `tofu init` here fails with "Module not found".
+# ── Terraform or OpenTofu, either one ────────────────────────────────────────
+# The module is published to both registry.terraform.io and registry.opentofu.org,
+# so the `source` below resolves under `terraform init` and `tofu init` alike.
 #
-# Under OpenTofu, swap the two source/version lines for a git ref:
-#
-#   source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.1.0"
-#
-# and drop `version`. Same commit, same result. That is what iac/tofu/n8n/ does.
+# That was not true before 2026-08-17: the two registries are separate indexes,
+# the module was on Terraform's only, and `tofu init` failed here with "Module
+# not found" on a config that was perfectly correct. If you hit that on some
+# other module, the answer is usually which index your binary is asking, not
+# your config — a git::...?ref= source is the workaround.
 #
 # ── This vs iac/tofu/n8n/ ────────────────────────────────────────────────────
 # This file is the module doing its own routing (create_ingress defaulted on,
@@ -60,8 +58,10 @@ provider "kubectl" {
 module "n8n" {
   # `~> 0.1` takes patches and holds the minor. Still pre-1.0, so a minor bump
   # may break the input surface; read the module CHANGELOG before widening this.
-  source  = "TpyoKnig/n8n/kubernetes"
-  version = "~> 0.1"
+  source = "TpyoKnig/n8n/kubernetes"
+  # Patch-only. `~> 0.1` would also accept 0.2.0, and pre-1.0 minors are where
+  # this module is still free to break its input surface.
+  version = "~> 0.1.0"
 
   n8n_domain = "n8n.example.com"
 
