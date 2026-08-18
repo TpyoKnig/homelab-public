@@ -126,7 +126,7 @@ scrape_configs:
     static_configs: [{ targets: ['loki:3100'] }]
   - job_name: obs-grafana
     static_configs: [{ targets: ['grafana:3000'] }]
-# When the cluster exists, append the k8s SD block from 06-Ops-Host.md. That
+# When the cluster exists, append the k8s SD block from docs/06-ops-host.md. That
 # doc also adds the Tempo service; its obs-tempo scrape job is NOT created by
 # this script and has to be added by hand — see "Scraping the stack itself"
 # there for the two lines and why Tempo is the one worth scraping.

@@ -60,7 +60,10 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=30d
-      - --web.enable-remote-write-receiver     # Tempo pushes exemplars here
+      - --web.enable-remote-write-receiver     # Tempo's generator writes here
+      - --enable-feature=exemplar-storage      # ...and its exemplars, which are
+                                               # otherwise accepted and dropped
+      - --web.enable-lifecycle                 # POST /-/reload; 401 without it
     ports: ["127.0.0.1:9090:9090"]
     extra_hosts: ["host.docker.internal:host-gateway"]
     restart: unless-stopped
@@ -117,7 +120,9 @@ dashboard goes flat with nothing else to warn you. The two to alert on:
 | `tempo_metrics_generator_registry_active_series` | pinned at 0 → generation has stopped |
 | `tempo_metrics_generator_spans_discarded_total` | spans arriving but being dropped |
 
-Reload without a restart: `curl -X POST http://localhost:9090/-/reload`.
+Reload without a restart: `curl -X POST http://localhost:9090/-/reload`. That needs
+`--web.enable-lifecycle` on Prometheus (it is in the compose block above); without it
+the endpoint answers 401 `Lifecycle API is not enabled`.
 
 ### Scraping the cluster from outside
 

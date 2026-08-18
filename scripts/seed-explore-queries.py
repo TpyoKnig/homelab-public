@@ -178,15 +178,27 @@ def fetch_seeded():
         page += 1
 
 
+# Keys this script sets on a query AND that Grafana stores back verbatim.
+# Anything outside this set is Grafana's own enrichment (datasource, editorMode,
+# range, ...) and is ignored, so an untouched entry is not rewritten every run.
+#
+# Only put a key here if Grafana actually round-trips it. `limit`, for example,
+# is accepted on create and never persisted — including it would make every
+# affected entry compare as changed and be recreated on every single run.
+MANAGED_KEYS = {"refId", "expr", "query", "queryType"}
+
+
 def same_query(entry, ds_uid, query):
     """Whether a stored entry already holds exactly the query we want."""
     stored = entry.get("queries") or []
     if entry.get("datasourceUid") != ds_uid or len(stored) != 1:
         return False
-    # Grafana echoes back the keys it stored, and may add its own (datasource,
-    # editorMode, ...). Compare only the keys we set, so an untouched entry is
-    # not rewritten on every run purely because Grafana enriched it.
-    return all(stored[0].get(k) == v for k, v in query.items())
+    # Compare both directions across the managed keys. Checking only the keys
+    # in `query` would miss a REMOVED field: drop `limit` from a QUERIES entry
+    # and the stored copy still carries it, yet every desired key matches, so
+    # the edit would never be applied.
+    return {k: v for k, v in stored[0].items() if k in MANAGED_KEYS} == \
+           {k: v for k, v in query.items() if k in MANAGED_KEYS}
 
 
 def main():
@@ -255,8 +267,13 @@ def main():
             # a PATCH-based "refresh" look like it worked while changing
             # nothing. Recreating costs the entry its uid; there is no API that
             # edits a stored query in place.
-            api(f"/api/query-history/{entry['uid']}", "DELETE")
+            #
+            # Create BEFORE deleting. The reverse order means a failure between
+            # the two (network drop, POST returning no uid) destroys the user's
+            # existing entry and puts nothing back. Briefly having two entries
+            # under one label is recoverable; having none is not.
             create(ds_uid, comment, query)
+            api(f"/api/query-history/{entry['uid']}", "DELETE")
             print(f"  ~ {ds_name:11} {comment}  (query changed, recreated)")
             replaced += 1
     except ApiError as e:
