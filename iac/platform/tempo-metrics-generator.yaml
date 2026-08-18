@@ -54,3 +54,23 @@ overrides:
           dimensions:
             - n8n.node.type
             - n8n.node.name
+
+# ── A warning, learned the hard way ──────────────────────────────────────────
+# Do NOT add `filter_policies` under span_metrics on Tempo 2.6.1 to exclude a
+# service from metric generation. The config parses, Tempo starts clean, and
+# span-metrics generation stops **entirely** - for every service, not just the
+# filtered one.
+#
+# It fails silently in the worst way: no error, no warning, and
+# tempo_metrics_generator_spans_discarded_total{reason="span_metrics_filtered"}
+# stays at 0, so nothing indicates filtering is happening at all. The only
+# symptom is registry_active_series and registry_series_added_total pinned at
+# zero while traces keep arriving normally and stay searchable. Dashboards go
+# flat with no clue why.
+#
+# Scrape Tempo itself (see scripts/bootstrap-ops-host.sh) so those two metrics
+# are visible - they are the only warning you get.
+#
+# To exclude a service, drop its spans upstream in whatever collector feeds
+# Tempo (an OpenTelemetry Collector or Grafana Alloy filter processor), or turn
+# the exporter off in the application. Not here.

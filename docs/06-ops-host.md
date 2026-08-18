@@ -402,6 +402,23 @@ bite you:
 - **`--delete` is what propagates retention** to the NAS. Drop it and the NAS grows
   forever. Conversely, never point another system's backup target *inside* a tree that a
   `--delete` mirror owns.
+- **Back up Grafana's SQLite, and back up every config the stack reads — not just the
+  ones you remember writing.** The self-backup listed `/opt/obs/{.env,prometheus.yml,
+  compose.yaml}` by name, which quietly excluded `tempo.yaml` — the file holding the
+  span-metric dimensions the tracing dashboard is built on — and `loki-config.yaml`.
+  `/mnt/data/grafana/grafana.db` was missing entirely, and it is the only copy of the
+  datasource UIDs every UI-created dashboard binds to, plus Explore's starred queries.
+  Dashboards are re-importable from git; the UIDs they bind to are not.
+
+  Snapshot SQLite properly rather than copying it. Grafana is running, so `cp` can catch
+  a torn write mid-transaction:
+
+  ```bash
+  sqlite3 /mnt/data/grafana/grafana.db ".backup '/opt/obs/grafana.db.snapshot'"
+  ```
+
+  Verify by counting rows in the snapshot, not by checking the file exists —
+  `select count(*) from dashboard;` should match what Grafana shows.
 
 Two copies: NAS (copy 1) and local disk (copy 2). Both scripts check `mountpoint -q`
 first and warn to stderr rather than syncing into an empty mount point.

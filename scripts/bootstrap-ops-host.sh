@@ -118,6 +118,17 @@ scrape_configs:
     static_configs: [{ targets: ['localhost:9090'] }]
   - job_name: node-exporter-pi
     static_configs: [{ targets: ['host.docker.internal:9100'] }]
+  # The observability stack watching itself. Easy to skip and worth doing:
+  # Tempo's metrics-generator is what turns spans into the traces_spanmetrics_*
+  # series the tracing dashboard reads, so if it stalls the dashboard just goes
+  # flat. tempo_metrics_generator_spans_discarded_total and
+  # ..._registry_active_series are the two to alert on.
+  - job_name: obs-tempo
+    static_configs: [{ targets: ['tempo:3200'] }]
+  - job_name: obs-loki
+    static_configs: [{ targets: ['loki:3100'] }]
+  - job_name: obs-grafana
+    static_configs: [{ targets: ['grafana:3000'] }]
 # When the cluster exists, append the k8s SD block from 06-Ops-Host.md.
 YAML
 
