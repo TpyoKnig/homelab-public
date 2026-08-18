@@ -32,6 +32,31 @@ The community dashboards below reference `${datasource}` / `${DS_PROMETHEUS}`
 template variables rather than fixed UIDs, so they were already portable and
 needed no rewriting.
 
+## n8n-full-observability, and the 19 flags behind it
+
+`n8n-full-observability.json` is 30 panels over every metric group n8n 2.34.6 can
+emit: executions, webhooks, queue, DB pool, scheduler, execution-data I/O, cache
+and per-role process health.
+
+Most of it reports nothing on a default install. `N8N_METRICS=true` enables the
+endpoint, but **19 of the 23 `N8N_METRICS_INCLUDE_*` groups default to false**, so
+the endpoint looks complete while saying nothing about webhooks, the scheduler, the
+DB pool, SSRF blocks or DNS cache. Turning them all on took this instance from 66 to
+127 distinct metric names, for about 1,700 extra series — under 2% of this
+Prometheus.
+
+Two rules are baked into the queries, and getting either wrong produces
+confidently wrong numbers:
+
+- **Counters and histograms use `sum()`.** An execution is recorded once, by the
+  process that ran it. Summing across pods is the correct total.
+- **Shared-state gauges use `max()`.** `n8n_active_workflow_count` is read from the
+  database, so *every* pod reports the same value. `sum()` multiplies it by the pod
+  count — and that bites at two replicas, not just at scale.
+
+It uses a `DS_PROMETHEUS` datasource-type variable rather than a fixed UID, so
+unlike the exports described below it binds correctly on any Grafana.
+
 ## Variables are discovered, not hardcoded
 
 The n8n dashboards select their target through **query variables** that read the
@@ -67,6 +92,7 @@ instance.
 | `n8n-system-health-overview-pick-instance.json` | [24474](https://grafana.com/grafana/dashboards/24474) by **nluecke**, modified |
 | `n8n-workflow-execution-analytics.json` | [24475](https://grafana.com/grafana/dashboards/24475) by **nluecke**, modified |
 | `n8n-on-talos.json` | original |
+| `n8n-full-observability.json` | original |
 
 The six community dashboards remain under their authors' terms; they are
 vendored here for reproducibility, not relicensed. Check the upstream page

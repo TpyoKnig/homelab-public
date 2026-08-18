@@ -33,6 +33,9 @@ providers:
 # | kubernetes-views-nodes                 | 15759 | Prometheus | "
 # | kubernetes-views-pods                  | 15760 | Prometheus | Restarts, CPU throttling, OOMs
 # | n8n-on-talos                           | —     | Prom+Loki  | Original, not from grafana.com
+# | n8n-full-observability                 | —     | Prometheus | Original. 30 panels over every metric
+# |                                        |       |            | group n8n can emit; needs the 19
+# |                                        |       |            | N8N_METRICS_INCLUDE_* flags on
 #
 # Attribution, the two gotchas that make the Kubernetes dashboards render, and
 # why the datasource UIDs in these files were rewritten: dashboards/README.md.
