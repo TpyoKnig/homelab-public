@@ -298,6 +298,30 @@ prompts at import time.
 
 Loki's default is **never expire**. Set this on day one, not after the disk fills.
 
+## Prebuilt Explore queries
+
+Dashboards cover what you watch continuously. Explore is for the follow-up question,
+and by default it opens empty, so everyone retypes TraceQL from memory.
+
+Grafana 11.3 has no shareable query library — that arrived in later releases. What it
+does have is per-user query history with a starred flag and an API to write to it, which
+is enough. [`scripts/seed-explore-queries.py`](../scripts/seed-explore-queries.py) seeds
+14 labelled, starred queries across Prometheus, Tempo and Loki:
+
+```bash
+GF_PASS="$GF_SECURITY_ADMIN_PASSWORD" ./scripts/seed-explore-queries.py
+# then: Explore -> Query history -> Starred
+```
+
+It looks datasources up by **name**, not UID, so it works against a Grafana whose
+datasources were created through the UI and carry random UIDs. It is idempotent — entries
+are matched on their label, so re-running updates rather than duplicating — and
+`--dry-run` prints what it would do.
+
+The one real limitation: **query history is per user.** Seeding as `admin` gives the
+queries to `admin` only. On a single-operator box that is a non-issue; with a team, run
+it per login or accept it as an admin convenience.
+
 ## Forgejo
 
 ```yaml
