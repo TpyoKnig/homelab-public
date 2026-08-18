@@ -20,38 +20,22 @@ providers:
       foldersFromFilesStructure: true
 
 # ── The dashboards themselves ────────────────────────────────────────────────
-# Not vendored here: community dashboard JSON is large, versioned upstream, and
-# licensed by its authors. Fetch by ID and drop the JSON into the path above.
+# Vendored in dashboards/ — copy that directory to the path above and
+# they load within updateIntervalSeconds. No import step and no clicking, which
+# also means no chance of pointing one at the wrong datasource by hand.
 #
-#   curl -s https://grafana.com/api/dashboards/<ID>/revisions/latest/download \
-#     -o /mnt/data/grafana/dashboards/<name>.json
+# | File                                   | ID    | Reads from | Notes
+# |----------------------------------------|-------|------------|----------------------
+# | n8n-system-health-overview-*           | 24474 | Prometheus | Node.js runtime: heap, GC, event loop
+# | n8n-workflow-execution-analytics-*     | 24475 | Postgres   | Needs the n8n-postgres datasource
+# | node-exporter-full                     | 1860  | Prometheus | Per-node CPU/mem/disk/net/temps
+# | kubernetes-views-global                | 15757 | Prometheus | Needs the `cluster` label
+# | kubernetes-views-nodes                 | 15759 | Prometheus | "
+# | kubernetes-views-pods                  | 15760 | Prometheus | Restarts, CPU throttling, OOMs
+# | n8n-on-talos                           | —     | Prom+Loki  | Original, not from grafana.com
 #
-# | ID    | Dashboard                          | Reads from     | Notes
-# |-------|------------------------------------|----------------|---------------------------
-# | 24474 | n8n System Health Overview         | Prometheus     | Node.js runtime: heap, GC, event loop
-# | 24475 | n8n Workflow & Execution Analytics | Postgres       | Needs the n8n-postgres datasource
-# | 1860  | Node Exporter Full                 | Prometheus     | Per-node CPU/mem/disk/net/temps
-# | 15757 | Kubernetes / Views / Global        | Prometheus     | Needs the `cluster` label (see below)
-# | 15759 | Kubernetes / Views / Nodes         | Prometheus     | "
-# | 15760 | Kubernetes / Views / Pods          | Prometheus     | Restarts, CPU throttling, OOMs
+# Attribution, the two gotchas that make the Kubernetes dashboards render, and
+# why the datasource UIDs in these files were rewritten: dashboards/README.md.
 #
-# TWO THINGS THAT MAKE THESE WORK, both easy to miss:
-#
-# 1. The `cluster` label. Every 157xx dashboard filters on {cluster="$cluster"}
-#    and renders completely empty without it. The scrape config injects it with
-#    a static relabel — see docs/06-ops-host.md. Nothing warns you; the panels
-#    just say "No data".
-#
-# 2. The kubelet cadvisor job. The pod-level CPU/memory panels read container_*
-#    and machine_* series, which come from /metrics/cadvisor on the kubelet, NOT
-#    from node-exporter or kube-state-metrics. Miss that scrape job and the
-#    dashboards load, most panels populate, and only the per-pod ones are blank —
-#    which reads as a broken dashboard rather than a missing target.
-#
-# After importing, set each dashboard's datasource variable. Community
-# dashboards ship pointing at whatever UID their author used.
-#
-# ── Custom dashboards ────────────────────────────────────────────────────────
-# Export your own with Share → Export → "Export for sharing externally", which
-# replaces the hardcoded datasource UID with a __inputs variable. Save the JSON
-# into the provisioning path and it survives a Grafana rebuild.
+# Community dashboards remain under their authors' terms — vendored for
+# reproducibility, not relicensed.

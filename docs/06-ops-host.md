@@ -215,10 +215,12 @@ Provision both **from files**, not the UI:
 under `/etc/grafana/provisioning/`. That is the difference between an observability stack
 you can rebuild and one you have to remember.
 
-> The lab this came from does **not** do this yet — its datasources and dashboards were
-> clicked in and live only in Grafana's SQLite, which is a restore-from-backup dependency
-> rather than a rebuild. The files here are the fix, not a mirror. If you are starting
-> fresh, start provisioned; it costs nothing on day one and is tedious to retrofit.
+> Partly retrofitted. The dashboards are now exported to files and shipped here, but the
+> lab's own Grafana still has its **datasources** clicked in — they carry random UIDs like
+> `cft4er82n82yod` rather than the stable ones `grafana-datasources.yaml` declares, which
+> is exactly the drift that makes a raw dashboard export unusable elsewhere. So the
+> datasource file here is still the fix rather than a mirror. If you are starting fresh,
+> start provisioned; it costs nothing on day one and is tedious to retrofit.
 
 Four datasources: **Prometheus**, **Loki**, **Tempo** (with `tracesToLogsV2` so a span
 jumps to its log lines), and **n8n-postgres** — a direct read used by the workflow
@@ -236,10 +238,20 @@ needs the cluster's Postgres reachable on the LAN; see
 | 15759 | Kubernetes / Views / Nodes | Prometheus — allocatable vs allocated |
 | 15760 | Kubernetes / Views / Pods | Prometheus — restarts, throttling, OOMs |
 
+All seven are vendored at
+[`iac/platform/dashboards/`](../iac/platform/dashboards/) — copy the directory into the
+provisioning path and they load within 30 seconds:
+
 ```bash
-curl -s https://grafana.com/api/dashboards/1860/revisions/latest/download \
-  -o /mnt/data/grafana/dashboards/node-exporter-full.json
+cp iac/platform/dashboards/*.json /mnt/data/grafana/dashboards/
 ```
+
+Their datasource UIDs were rewritten to the stable ones
+`grafana-datasources.yaml` provisions (`prometheus`, `loki`, `tempo`,
+`n8n-postgres`). A UI-created datasource gets a random UID like `cft4er82n82yod`, and an
+export bakes it into every panel, so a raw export is useless on any other machine: the
+dashboard loads and every panel reads *Datasource not found*. Attribution and the full
+mapping are in [`iac/platform/dashboards/README.md`](../iac/platform/dashboards/README.md).
 
 **Put the required template variable in the dashboard title.** The `— pick
 namespace/instance` suffixes above are deliberate. Several of these render blank until you
@@ -249,7 +261,7 @@ title turns "this is broken" into "set the dropdown". Where a dashboard is pinne
 instance, put *that* in the title instead, so a second n8n deployment can't be misread as
 the first.
 
-The first row is the hand-built landing page, and its JSON **is** included:
+The first row is the hand-built landing page, the only original in the set:
 [`iac/platform/dashboards/n8n-on-talos.json`](../iac/platform/dashboards/n8n-on-talos.json).
 Twelve panels — pod counts per role, queue depth, cache hit rate, node CPU and memory,
 pod count by namespace, pods not Running, plus two logs panels (live n8n main, and a
