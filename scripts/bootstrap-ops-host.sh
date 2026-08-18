@@ -14,9 +14,10 @@
 #                              Empty (the default) skips that step entirely.
 #   NAS_EXPORT=<ip>:<path>     NFS backup share. Empty skips the fstab entry.
 #
-# This is the PRE-CLUSTER state: Prometheus scrapes only itself and the host
-# node-exporter. Once the cluster exists, append the kubernetes_sd block and add
-# the Tempo service — see docs/06-ops-host.md.
+# This is the PRE-CLUSTER state: Prometheus scrapes itself, the host
+# node-exporter, and the two stack services this script starts (Loki, Grafana).
+# Once the cluster exists, append the kubernetes_sd block and add the Tempo
+# service plus its scrape job — see docs/06-ops-host.md.
 
 set -euo pipefail
 
@@ -118,18 +119,18 @@ scrape_configs:
     static_configs: [{ targets: ['localhost:9090'] }]
   - job_name: node-exporter-pi
     static_configs: [{ targets: ['host.docker.internal:9100'] }]
-  # The observability stack watching itself. Easy to skip and worth doing:
-  # Tempo's metrics-generator is what turns spans into the traces_spanmetrics_*
-  # series the tracing dashboard reads, so if it stalls the dashboard just goes
-  # flat. tempo_metrics_generator_spans_discarded_total and
-  # ..._registry_active_series are the two to alert on.
-  - job_name: obs-tempo
-    static_configs: [{ targets: ['tempo:3200'] }]
+  # The observability stack watching itself. Only the two services this script
+  # actually creates — adding a Tempo job here would leave a permanently down
+  # target, because Tempo is not part of the pre-cluster compose below.
   - job_name: obs-loki
     static_configs: [{ targets: ['loki:3100'] }]
   - job_name: obs-grafana
     static_configs: [{ targets: ['grafana:3000'] }]
-# When the cluster exists, append the k8s SD block from 06-Ops-Host.md.
+# When the cluster exists, append the k8s SD block from 06-Ops-Host.md — and
+# the obs-tempo job alongside the Tempo service, which the same doc adds.
+# Scraping Tempo matters more than it looks: its metrics-generator is what turns
+# spans into the traces_spanmetrics_* series the tracing dashboard reads, so if
+# it stalls the dashboard just goes flat.
 YAML
 
 # --- grafana admin password (generate once, keep across re-runs) ---

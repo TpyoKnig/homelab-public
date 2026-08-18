@@ -13,8 +13,9 @@ Caveats worth knowing before you rely on this:
   * These are queries, not dashboards. Anything you want to watch continuously
     belongs on a dashboard; Explore is for the ad-hoc follow-up.
 
-Idempotent: entries are matched by their comment, so re-running updates rather
-than duplicating.
+Idempotent: entries are matched by their label, so re-running never duplicates.
+A label that already exists is PATCHed in place, so editing a query in QUERIES
+does reach the entry the user sees, and the uid survives.
 
 Usage:
     GF_URL=http://localhost:3000 GF_USER=admin GF_PASS=... ./seed-explore-queries.py
@@ -128,6 +129,10 @@ QUERIES = [
 ]
 
 
+class ApiError(RuntimeError):
+    pass
+
+
 def api(path, method="GET", body=None):
     req = urllib.request.Request(f"{GF_URL}{path}", method=method)
     token = base64.b64encode(f"{GF_USER}:{GF_PASS}".encode()).decode()
@@ -135,49 +140,90 @@ def api(path, method="GET", body=None):
     if body is not None:
         req.add_header("Content-Type", "application/json")
         req.data = json.dumps(body).encode()
-    with urllib.request.urlopen(req) as r:
-        return json.loads(r.read() or "{}")
+    try:
+        with urllib.request.urlopen(req) as r:
+            return json.loads(r.read() or "{}")
+    except urllib.error.HTTPError as e:
+        # A raw traceback is a poor result for a seeding script that may have
+        # already written entries. Surface the status and body instead, and let
+        # the caller report how far it got.
+        detail = (e.read() or b"").decode(errors="replace").strip()[:300]
+        raise ApiError(f"{method} {path} -> HTTP {e.code}: {detail}") from None
+    except urllib.error.URLError as e:
+        raise ApiError(f"{method} {path} -> cannot reach {GF_URL}: {e.reason}") from None
+
+
+def fetch_seeded():
+    """Map comment -> uid for everything this script has previously written.
+
+    Reads the FULL history rather than only starred entries. An entry created
+    but not yet starred (interrupted run) or later un-starred by hand is still
+    ours, and missing it would create a duplicate on the next run. Pages until
+    the API stops returning rows, because a user with more than one page of
+    history would otherwise hide the older seeded labels.
+    """
+    seeded, page = {}, 1
+    while True:
+        result = api(f"/api/query-history?limit=100&page={page}").get("result") or {}
+        # An empty history returns queryHistory: null, not [], so `or []` matters.
+        rows = result.get("queryHistory") or []
+        if not rows:
+            return seeded
+        for e in rows:
+            if e.get("comment"):
+                seeded.setdefault(e["comment"], e["uid"])
+        page += 1
 
 
 def main():
     if not GF_PASS:
         sys.exit("GF_PASS is not set. Export it, or source your Grafana env file.")
 
-    uid_by_name = {d["name"]: d["uid"] for d in api("/api/datasources")}
+    try:
+        uid_by_name = {d["name"]: d["uid"] for d in api("/api/datasources")}
+    except ApiError as e:
+        sys.exit(f"Could not list datasources: {e}")
+
     missing = {n for n, _, _ in QUERIES} - uid_by_name.keys()
     if missing:
         sys.exit(f"Datasource(s) not found by name: {sorted(missing)}. "
                  f"Have: {sorted(uid_by_name)}")
 
-    existing = {}
-    # An empty history returns queryHistory: null, not [], so `or []` is load-bearing.
-    history = api("/api/query-history?onlyStarred=true&limit=100").get("result") or {}
-    for e in history.get("queryHistory") or []:
-        if e.get("comment"):
-            existing[e["comment"]] = e["uid"]
-
-    created = updated = 0
-    for ds_name, comment, query in QUERIES:
-        if DRY_RUN:
+    if DRY_RUN:
+        for ds_name, comment, _ in QUERIES:
             print(f"  [dry-run] {ds_name:11} {comment}")
-            continue
-        if comment in existing:
-            # Already seeded. Leave the entry alone rather than churn its uid,
-            # which would break any bookmark pointing at it.
-            print(f"  = {ds_name:11} {comment}")
-            updated += 1
-            continue
-        res = api("/api/query-history", "POST",
-                  {"dataSourceUid": uid_by_name[ds_name], "queries": [query]})
-        uid = res.get("result", res).get("uid")
-        api(f"/api/query-history/star/{uid}", "POST")
-        api(f"/api/query-history/{uid}", "PATCH", {"comment": comment})
-        print(f"  + {ds_name:11} {comment}")
-        created += 1
+        return
 
-    if not DRY_RUN:
-        print(f"\n{created} created, {updated} already present. "
-              f"Explore -> Query history -> Starred.")
+    try:
+        existing = fetch_seeded()
+    except ApiError as e:
+        sys.exit(f"Could not read query history: {e}")
+
+    created = refreshed = 0
+    try:
+        for ds_name, comment, query in QUERIES:
+            payload = {"dataSourceUid": uid_by_name[ds_name], "queries": [query]}
+            if comment in existing:
+                # Refresh in place. Editing a query in QUERIES has to reach the
+                # entry the user actually sees, and PATCHing keeps the uid, so
+                # any bookmark pointing at it still resolves.
+                api(f"/api/query-history/{existing[comment]}", "PATCH",
+                    {"comment": comment, **payload})
+                print(f"  ~ {ds_name:11} {comment}")
+                refreshed += 1
+                continue
+            uid = api("/api/query-history", "POST", payload).get("result", {}).get("uid")
+            if not uid:
+                raise ApiError(f"create returned no uid for: {comment}")
+            api(f"/api/query-history/star/{uid}", "POST")
+            api(f"/api/query-history/{uid}", "PATCH", {"comment": comment})
+            print(f"  + {ds_name:11} {comment}")
+            created += 1
+    except ApiError as e:
+        sys.exit(f"\nAborted after {created} created / {refreshed} refreshed.\n{e}")
+
+    print(f"\n{created} created, {refreshed} refreshed. "
+          f"Explore -> Query history -> Starred.")
 
 
 if __name__ == "__main__":

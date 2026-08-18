@@ -314,9 +314,10 @@ GF_PASS="$GF_SECURITY_ADMIN_PASSWORD" ./scripts/seed-explore-queries.py
 ```
 
 It looks datasources up by **name**, not UID, so it works against a Grafana whose
-datasources were created through the UI and carry random UIDs. It is idempotent — entries
-are matched on their label, so re-running updates rather than duplicating — and
-`--dry-run` prints what it would do.
+datasources were created through the UI and carry random UIDs. It is idempotent: entries
+are matched on their label, and a label that already exists is PATCHed in place rather
+than recreated — so editing a query in the script does reach the entry you see in
+Explore, and the entry keeps its uid. `--dry-run` prints what it would do.
 
 The one real limitation: **query history is per user.** Seeding as `admin` gives the
 queries to `admin` only. On a single-operator box that is a non-issue; with a team, run
