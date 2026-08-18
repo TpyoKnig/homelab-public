@@ -32,6 +32,30 @@ The community dashboards below reference `${datasource}` / `${DS_PROMETHEUS}`
 template variables rather than fixed UIDs, so they were already portable and
 needed no rewriting.
 
+## Variables are discovered, not hardcoded
+
+The n8n dashboards select their target through **query variables** that read the
+values out of Prometheus:
+
+| Variable | Definition |
+|---|---|
+| `job` / `instance` | `label_values(n8n_version_info, job)` |
+| `namespace` | `label_values(kube_deployment_status_replicas_ready{deployment=~"n8n.*"}, namespace)` |
+
+They were originally custom variables holding one hardcoded option — this lab's
+Prometheus job name (`k8s-n8n`) and namespace (`n8n`). That works nowhere but the
+machine it was exported from, and worse, a dashboard titled *pick instance* whose
+dropdown holds exactly one value tells you nothing. Discovered variables populate
+from whatever you actually named your scrape job.
+
+Note the `job` label is the **Prometheus scrape job**, not the Kubernetes
+namespace. They are unrelated, and a lab can name the job anything.
+
+`n8n-workflow-execution-analytics` has no variable at all: it queries n8n's
+Postgres schema directly, so it reports on whichever instance the `n8n-postgres`
+datasource points at. Duplicate it and repoint the datasource to cover a second
+instance.
+
 ## What's here, and whose it is
 
 | File | Origin |
@@ -41,7 +65,7 @@ needed no rewriting.
 | `kubernetes-views-nodes.json` | [15759](https://grafana.com/grafana/dashboards/15759) by **dotdc** |
 | `kubernetes-views-pods.json` | [15760](https://grafana.com/grafana/dashboards/15760) by **dotdc** |
 | `n8n-system-health-overview-pick-instance.json` | [24474](https://grafana.com/grafana/dashboards/24474) by **nluecke**, modified |
-| `n8n-workflow-execution-analytics-n8n-local-prod.json` | [24475](https://grafana.com/grafana/dashboards/24475) by **nluecke**, modified |
+| `n8n-workflow-execution-analytics.json` | [24475](https://grafana.com/grafana/dashboards/24475) by **nluecke**, modified |
 | `n8n-on-talos.json` | original |
 
 The six community dashboards remain under their authors' terms; they are

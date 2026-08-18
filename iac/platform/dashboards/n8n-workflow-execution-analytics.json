@@ -15,7 +15,7 @@
       }
     ]
   },
-  "description": "Comprehensive analytics dashboard for n8n workflow automation platform. Monitor workflow execution performance, track success rates, identify bottlenecks, and optimize your automation workflows.  \r\n\r\nhttps://github.com/nluecke/grafana-n8n-dashboards/tree/main/dashboards/postgresql",
+  "description": "Reads n8n's own Postgres schema via the n8n-postgres datasource, so it reports on whichever n8n instance that datasource points at. Duplicate the dashboard and repoint the datasource to cover a second instance.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "gnetId": 24475,
@@ -2088,7 +2088,7 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "n8n Workflow & Execution Analytics \u2014 n8n-local (prod)",
+  "title": "n8n Workflow & Execution Analytics",
   "uid": "adfcxfk",
   "weekStart": ""
 }

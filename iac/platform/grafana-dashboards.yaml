@@ -27,7 +27,7 @@ providers:
 # | File                                   | ID    | Reads from | Notes
 # |----------------------------------------|-------|------------|----------------------
 # | n8n-system-health-overview-*           | 24474 | Prometheus | Node.js runtime: heap, GC, event loop
-# | n8n-workflow-execution-analytics-*     | 24475 | Postgres   | Needs the n8n-postgres datasource
+# | n8n-workflow-execution-analytics       | 24475 | Postgres   | Follows the n8n-postgres datasource
 # | node-exporter-full                     | 1860  | Prometheus | Per-node CPU/mem/disk/net/temps
 # | kubernetes-views-global                | 15757 | Prometheus | Needs the `cluster` label
 # | kubernetes-views-nodes                 | 15759 | Prometheus | "

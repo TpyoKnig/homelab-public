@@ -1364,25 +1364,28 @@
   "templating": {
     "list": [
       {
-        "current": {
-          "selected": true,
-          "text": "n8n-local (prod)",
-          "value": "k8s-n8n"
+        "current": {},
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
         },
+        "definition": "label_values(n8n_version_info, job)",
+        "description": "Prometheus job label of the n8n scrape target. Discovered from the data, so it works whatever you named the job in prometheus.yml.",
         "hide": 0,
         "includeAll": false,
-        "label": "n8n instance",
+        "label": "n8n job",
         "multi": false,
         "name": "instance",
-        "options": [
-          {
-            "selected": true,
-            "text": "n8n-local (prod)",
-            "value": "k8s-n8n"
-          }
-        ],
-        "query": "n8n-local (prod) : k8s-n8n",
-        "type": "custom"
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values(n8n_version_info, job)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 1,
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
       },
       {
         "current": {

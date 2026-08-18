@@ -232,7 +232,7 @@ needs the cluster's Postgres reachable on the LAN; see
 | --- | --- | --- |
 | — | n8n on Talos — *pick namespace/instance* | Prometheus + Loki — the landing page |
 | 24474 | n8n System Health Overview — *pick instance* | Prometheus — Node.js heap, GC, event loop |
-| 24475 | n8n Workflow & Execution Analytics — *`<instance>`* | Postgres — success rates, throughput, per-workflow trends |
+| 24475 | n8n Workflow & Execution Analytics | Postgres — success rates, throughput, per-workflow trends. Reports on whichever instance `n8n-postgres` points at |
 | 1860 | Node Exporter Full | Prometheus — per-node CPU/mem/disk/net/temps |
 | 15757 | Kubernetes / Views / Global | Prometheus — namespaces, workloads, pressure |
 | 15759 | Kubernetes / Views / Nodes | Prometheus — allocatable vs allocated |
