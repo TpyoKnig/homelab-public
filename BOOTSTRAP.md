@@ -12,24 +12,26 @@ Before this: four powered-off machines and a domain. After this: a three-node Ku
 cluster serving n8n on your own hostnames, rebuildable from git.
 
 ```mermaid
-flowchart LR
-    subgraph prep["Prep, no cluster yet"]
+flowchart TD
+    subgraph prep["1 · Prep — before the cluster exists"]
+        direction LR
         S0["0 · Ops host"] --> SA["A · BIOS"] --> SB["B · Boot Talos"]
     end
-    subgraph build["Build the cluster"]
-        SC["C · Match config"] --> SD["D · tofu apply"] --> SE["E · Cilium"]
+    subgraph build["2 · Build the cluster — ~20 min"]
+        direction LR
+        SC["C · Match config"] --> SD["D · tofu apply"]
+        SD -. "⏱ 10 min window" .-> SE["E · Cilium"]
     end
-    subgraph platform["Platform plumbing"]
-        SF["F · Longhorn"] --> SG["G · cert-manager"] --> SH["H · ingress-nginx"]
-        SH --> SI["I · Tunnel"] --> SJ["J · KEDA"]
+    subgraph platform["3 · Platform plumbing — ~30 min"]
+        direction LR
+        SF["F · Longhorn"] --> SG["G · cert-manager"] --> SH["H · ingress-nginx"] --> SI["I · Tunnel"] --> SJ["J · KEDA"]
     end
-    subgraph run["Hand it to git"]
+    subgraph run["4 · Hand it to git"]
+        direction LR
         SK["K · Validate"] --> SL["L · GitOps"] --> SM["M · Workloads"] --> SN["N · Day-2"]
     end
-    SB --> SC
-    SD -.->|"10 minute window"| SE
-    SE --> SF
-    SJ --> SK
+    prep --> build --> platform --> run
+    style build stroke:#a2530a,stroke-width:2px
 ```
 
 The single linear sequence. Every stage has a command and a ✅ verify line. Work top to
