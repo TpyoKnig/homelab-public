@@ -1,10 +1,11 @@
 # n8n-sandbox-service — isolated code execution for the n8n AI Assistant.
 #
-# Chart source is the git repo at a TAG. The chart is vendored at
-# charts/n8n-sandbox-service and is NOT published to a Helm repo or as an OCI
-# artifact — the tag (or a commit SHA) is the only way to get this exact copy.
-# Chart.yaml says version 0.3.0; that is not a pullable coordinate, so pin
-# targetRevision to the tag instead.
+# Chart source is the upstream repo at a COMMIT. n8n maintains the service at
+# n8n-io/n8n-sandbox-service; the chart is vendored at charts/n8n-sandbox-service
+# and is NOT published to a Helm repo or as an OCI artifact, so pin a commit (or
+# a tag once upstream tags chart releases). This commit is the chart 0.4.0 merge
+# (PR #126), the first release with privileged isolation for immutable-rootfs
+# distros like Talos.
 #
 # Same two-source shape as every other app here: chart from upstream, values from
 # git. Bumping the service = bump targetRevision.
@@ -25,8 +26,8 @@ spec:
     server: https://kubernetes.default.svc
     namespace: n8n-sandbox
   sources:
-    - repoURL: https://github.com/TpyoKnig/n8n-sandbox-service.git
-      targetRevision: "0.0.1"
+    - repoURL: https://github.com/n8n-io/n8n-sandbox-service.git
+      targetRevision: 2a5af87727cb4055622623bc1f0ce62db4e9a776  # chart 0.4.0 (PR #126)
       path: charts/n8n-sandbox-service
       helm:
         releaseName: n8n-sandbox-service

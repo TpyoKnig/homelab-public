@@ -1,18 +1,18 @@
 # 08 · n8n sandbox service
 
-> **Moved upstream.** This lab retired its copy on 2026-08-20, and n8n now maintains the
-> service at [n8n-io/n8n-sandbox-service](https://github.com/n8n-io/n8n-sandbox-service).
-> Since chart `0.4.0` ([PR #126](https://github.com/n8n-io/n8n-sandbox-service/pull/126))
-> immutable-rootfs distros are supported directly, so the `0.0.1` pin below is history.
-> Kept here because the Talos-specific failure modes (privileged DinD on an immutable
-> rootfs, the CA-issuer dance) are still the useful part.
+> **Moved upstream, still running here.** n8n adopted this service and maintains it at
+> [n8n-io/n8n-sandbox-service](https://github.com/n8n-io/n8n-sandbox-service); this lab's
+> original repo was archived 2026-08-20 the same week. Since chart `0.4.0`
+> ([PR #126](https://github.com/n8n-io/n8n-sandbox-service/pull/126)) immutable-rootfs
+> distros are supported directly with `privileged` isolation, and that chart is what this
+> lab runs today. The old `0.0.1` tag pin is history; the Talos failure modes below are
+> not, which is why the doc stays.
 
-The short version for newcomers: this service gave the n8n AI Assistant somewhere to
-execute the code it writes, one disposable container per session. The install steps below
-are a record, not a recommendation. The reason to read on is Talos: putting
-Docker-in-Docker on an immutable rootfs (a read-only root filesystem that cannot be
-modified at runtime) forces choices you will meet again with any workload that needs
-privileges.
+The short version for newcomers: this service gives the n8n AI Assistant somewhere to
+execute the code it writes, one disposable container per session. The reason the Talos
+part matters: putting Docker-in-Docker on an immutable rootfs (a read-only root
+filesystem that cannot be modified at runtime) forces choices you will meet again with
+any workload that needs privileges.
 
 Each sandbox from
 [`n8n-sandbox-service`](https://github.com/n8n-io/n8n-sandbox-service) is a Debian
@@ -20,7 +20,7 @@ container managed by an in-container Docker daemon, created and torn down over a
 
 Without it, the assistant loads and chats but every code execution fails.
 
-> **On Talos, or any immutable-rootfs distro, today: use the upstream chart, not a pin.**
+> **On Talos, or any immutable-rootfs distro: use the upstream chart, not the old pin.**
 > Chart `0.4.0` and later renders the same Docker-in-Docker runner without sysbox:
 > ```yaml
 > runner:
@@ -29,12 +29,13 @@ Without it, the assistant loads and chats but every code execution fails.
 > ```
 > plus `pod-security.kubernetes.io/enforce=privileged` on the namespace. Follow the
 > [upstream k8s quickstart](https://github.com/n8n-io/n8n-sandbox-service/blob/main/docs/quickstart-k8s.md).
-> Everything below documents the `0.0.1`-era install this lab ran.
+> The values in [`iac/apps/n8n-sandbox/values.yaml`](../iac/apps/n8n-sandbox/values.yaml)
+> are this shape, and they are what the lab runs.
 
-Pinned at the git tag **`0.0.1`** (commit `3a52ff8`), whose vendored chart declares
-`version: 0.3.0`, `appVersion: 0.1.0`. The chart is **not published to a registry** —
-reference the tag or the commit to get this exact copy. Deployed in `dind` mode, which
-exists for exactly this kind of cluster.
+Deployed from the upstream repo pinned at commit `2a5af877` (chart `0.4.0`, `appVersion`
+`1.1.0`). The chart is **not published to a registry**: reference a commit or tag to get
+an exact copy. Runs in `privileged` isolation, which exists for exactly this kind of
+cluster.
 
 ## Shape
 
@@ -59,10 +60,10 @@ lost.**
 
 ## Why `dind` mode on Talos
 
-The names below are the `0.3.0`-era chart this lab ran. Upstream chart `0.4.0` renamed
-them: `dind` became `runner.isolation: privileged`, `sysbox` became
-`runner.isolation: sysbox`, and `dataPlane.mode` is now `in-cluster` or `external`. The
-reasoning is unchanged.
+The names below are from the `0.3.0`-era chart this doc first documented. Chart `0.4.0`,
+which the lab runs now, renamed them: `dind` became `runner.isolation: privileged`,
+`sysbox` became `runner.isolation: sysbox`, and `dataPlane.mode` is now `in-cluster` or
+`external`. The reasoning is unchanged.
 
 The chart offers three data-plane modes:
 
@@ -193,20 +194,22 @@ No node labels, no tolerations, no RuntimeClass. Any node that can run a privile
 can run this.
 
 **The chart is not published to any registry.** It is vendored in the service repo and
-distributed by git tag only — there is no Helm repo and no OCI artifact to `helm repo add`
-or pull from. `0.3.0` is the version string inside `Chart.yaml`; the thing you actually
-reference is the **tag `0.0.1`** (commit `3a52ff8`). Pin the tag, not the chart version.
+referenced by git commit or tag: there is no Helm repo and no OCI artifact to
+`helm repo add` or pull from. `0.4.0` is the version string inside `Chart.yaml`; the thing
+you actually reference is a commit (the lab pins `2a5af877`, the PR #126 merge). Pin the
+commit, not the chart version.
 
 ```bash
-git clone --depth 1 --branch 0.0.1 https://github.com/TpyoKnig/n8n-sandbox-service.git
+git clone https://github.com/n8n-io/n8n-sandbox-service.git
+git -C n8n-sandbox-service checkout 2a5af877
 helm upgrade --install n8n-sandbox-service \
   ./n8n-sandbox-service/charts/n8n-sandbox-service \
   --namespace n8n-sandbox \
   -f iac/apps/n8n-sandbox/values.yaml
 ```
 
-The Argo Application takes the same route — `repoURL` + `path: charts/n8n-sandbox-service`
-+ `targetRevision: "0.0.1"` — for exactly this reason. If a registry-published chart ever
+The Argo Application takes the same route (`repoURL` + `path: charts/n8n-sandbox-service`
++ a pinned `targetRevision`) for exactly this reason. If a registry-published chart ever
 appears, swapping `sources[0]` to an `oci://` reference is the only change needed.
 
 > **Name the release after the chart.** The chart's `fullname` helper is the standard one:

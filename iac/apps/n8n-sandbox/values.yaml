@@ -1,10 +1,14 @@
-# n8n-sandbox-service, chart vendored at repo tag 0.0.1 (Chart.yaml version 0.3.0 —
-# not a pullable coordinate; the tag is what you reference).
+# n8n-sandbox-service, upstream chart from n8n-io/n8n-sandbox-service at 0.4.0.
+# This is the shape the lab runs (sanitised). The chart is vendored at
+# charts/n8n-sandbox-service in that repo and is NOT published to a Helm repo
+# or OCI registry: reference a commit or tag.
 #
-# dind mode, because this is Talos: the sysbox installer writes the node's
-# containerd config and restarts kubelet, and Talos has no shell, no package
-# manager and a read-only /. sysbox here is not slower, it is unavailable — the
-# sysbox-runc RuntimeClass never exists and the runner sits Pending forever.
+# privileged isolation, because this is Talos: the sysbox installer writes the
+# node's containerd config and restarts kubelet, and Talos has no shell, no
+# package manager and a read-only /. sysbox here is not slower, it is
+# unavailable — the sysbox-runc RuntimeClass never exists and the runner sits
+# Pending forever. Chart 0.4.0 supports this case directly and refuses to
+# render until the weaker boundary is acknowledged.
 #
 # The trade is real and worth restating: a privileged container can see the
 # node's cgroup tree. Fine for a namespace running code you own. Not fine for a
@@ -20,7 +24,29 @@
 #     pod-security.kubernetes.io/audit=privileged
 
 dataPlane:
-  mode: dind
+  mode: in-cluster         # 0.4.0 renamed the modes: in-cluster or external
+
+runner:
+  isolation: privileged         # use sysbox wherever the node runtime can be changed
+  acknowledgePrivileged: true   # the render fails without this line
+
+  dockerDataRoot:
+    # Inner image layers land here. An evicted runner takes every running
+    # sandbox with it, so the cap is deliberately not tiny — the sandbox image
+    # alone is most of a gigabyte. Flip to persistence for a volumeClaimTemplate
+    # per replica; never share one /var/lib/docker across runner pods.
+    emptyDir:
+      sizeLimit: 32Gi
+
+  resources:
+    requests: { cpu: 200m, memory: 512Mi }
+    limits: { memory: 6Gi }
+
+api:
+  persistence:
+    enabled: true
+    size: 2Gi
+    storageClass: longhorn
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
 # Created out of band as a SopsSecret, not by the chart — auth.generated.* would
@@ -46,51 +72,6 @@ tls:
       name: sandbox-ca
       kind: Issuer
       group: cert-manager.io
-
-api:
-  replicaCount: 1          # SQLite store; >1 needs api.config.store=postgres
-  image:
-    # Pin. A node that already holds a tag never re-pulls it, so :latest means
-    # the version depends on which node the pod landed on.
-    tag: "0.1.0"
-  persistence:
-    enabled: true
-    size: 1Gi
-    storageClass: longhorn
-  resources:
-    requests: { cpu: 50m, memory: 128Mi }
-    limits: { memory: 512Mi }
-  ingress:
-    enabled: false         # cluster-internal only; nothing outside needs this
-
-dindRunner:
-  enabled: true
-  replicaCount: 1
-  image:
-    tag: "0.1.0"
-  sandboxImage:
-    tag: "0.1.0"
-
-  dockerDataRoot:
-    # Inner image layers land here. An evicted runner takes every running
-    # sandbox with it, so the cap is deliberately not tiny — the sandbox image
-    # alone is most of a gigabyte.
-    #
-    # Flip to persistence for a volumeClaimTemplate per replica: survives a
-    # restart and skips re-pulling the sandbox image. Never share one
-    # /var/lib/docker across runner pods; dockerd needs exclusive access.
-    persistence:
-      enabled: false
-    emptyDirSizeLimit: 20Gi
-
-  resources:
-    requests: { cpu: 200m, memory: 512Mi }
-    limits: { memory: 4Gi }
-
-  # runtime.privileged: true and runtime.runtimeClassName: "" are the chart's
-  # dind defaults. The chart REJECTS the wrong combination at render time rather
-  # than producing a pod that starts and then fails every sandbox — so leaving
-  # these alone is correct, and overriding them fails loudly.
 
 # ── Restrict who can create sandboxes ────────────────────────────────────────
 # Off by default in the chart. Worth enabling: nothing but n8n should be reaching

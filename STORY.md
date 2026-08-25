@@ -316,7 +316,8 @@ upstream to n8n, and since chart `0.4.0`
 ([PR #126](https://github.com/n8n-io/n8n-sandbox-service/pull/126)) Talos is supported
 out of the box with `runner.isolation: privileged` plus
 `runner.acknowledgePrivileged: true`. The render fails until you acknowledge the weaker
-security boundary, which is the right kind of friction. No tag pin needed anymore.
+security boundary, which is the right kind of friction. No tag pin needed anymore, and
+the upstream chart is what this lab runs today.
 
 Wiring n8n to it is four env vars on the main pods:
 
