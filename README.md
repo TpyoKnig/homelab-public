@@ -1,12 +1,18 @@
 # Talos Kubernetes Homelab
 
-A 3-node HA Talos Linux Kubernetes cluster plus a Raspberry Pi ops host, built entirely
-from OpenTofu and reconciled by Argo CD. Everything external is reached through a
-Cloudflare Tunnel — no inbound port is open on the LAN.
+A 3-node HA (highly available: any one node can fail) Talos Linux Kubernetes cluster plus
+a Raspberry Pi ops host, built entirely from OpenTofu and reconciled by Argo CD (the
+cluster is continuously matched to what git declares). Everything external is reached
+through a Cloudflare Tunnel — no inbound port is open on the LAN.
 
 This repo is the sanitised, publishable version of a lab that actually runs. IPs, domain
 and hostnames are placeholders (`example.com`, `192.168.1.0/24`); the architecture,
 gotchas and command sequences are real.
+
+Written for someone comfortable with Docker at home but new to Kubernetes, the audience
+that already self-hosts n8n in one container. The reading order: [STORY.md](STORY.md) for
+the narrative and the costs, [BOOTSTRAP.md](BOOTSTRAP.md) for the build in command order,
+then docs/01 through 10 as the per-subsystem reference. Terms get defined at first use.
 
 ```
                     ┌───────────────── Home LAN 192.168.1.0/24 ─────────────────┐
@@ -27,6 +33,11 @@ gotchas and command sequences are real.
                          Cloudflare edge  ── *.example.com ──  git.example.com
 ```
 
+Reading the diagram: CP+etcd means every node runs the Kubernetes control plane and a copy
+of etcd (the cluster's state database), the VIP is one IP that floats across all three
+nodes so clients survive any one dying, and pi-ops is the off-cluster box holding
+monitoring and git.
+
 Two independent tunnels on purpose: if the cluster is gone, git — the source of truth —
 is still reachable, and the cluster can be rebuilt from it.
 
@@ -43,7 +54,7 @@ is still reachable, and the cluster can be rebuilt from it.
 | [docs/05-gitops.md](docs/05-gitops.md) | Forgejo + Argo CD + SOPS/age, and the app pattern |
 | [docs/06-ops-host.md](docs/06-ops-host.md) | Off-cluster observability, Forgejo, backups |
 | [docs/07-n8n.md](docs/07-n8n.md) | n8n Community via `terraform-kubernetes-n8n`, split ingress, driven from Argo |
-| [docs/08-n8n-sandbox.md](docs/08-n8n-sandbox.md) | `n8n-sandbox-service` for AI Assistant code execution, in `dind` mode |
+| [docs/08-n8n-sandbox.md](docs/08-n8n-sandbox.md) | `n8n-sandbox-service` for AI Assistant code execution, in `dind` mode (retired, kept for its Talos lessons) |
 | [docs/09-searxng.md](docs/09-searxng.md) | Self-hosted metasearch, also the assistant's search backend |
 | [docs/10-pr-agent.md](docs/10-pr-agent.md) | AI code review on every Forgejo PR |
 | [iac/](iac/) | The OpenTofu roots, platform values, Argo manifests |
