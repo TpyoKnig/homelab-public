@@ -4,8 +4,12 @@ Self-hosted metasearch. Two jobs here: a private search front-end for the househ
 the **web-search backend for n8n's AI Assistant** so queries don't carry a commercial API
 key or a stable client identity.
 
+Before this: n8n's assistant has no web search, short of paying Brave for a key. After
+this: it searches through a pod in this cluster, and no commercial key exists to leak.
+
 Deployed by Argo CD with the standard two-source pattern — chart from
-`https://charts.kubito.dev`, values from git. Manifests:
+`https://charts.kubito.dev` (a Helm chart, the app packaged as Kubernetes templates),
+values from git (the overrides layered on top). Manifests:
 [`iac/argocd/app-searxng.yaml`](../iac/argocd/app-searxng.yaml) and
 [`iac/apps/searxng/values.yaml`](../iac/apps/searxng/values.yaml).
 
@@ -36,7 +40,8 @@ config:
 `json`, SearXNG serves humans only.
 
 The `secret_key` signs session cookies and the limiter token, not credentials. It is
-still a secret: generate your own and, if you care, deliver it as a `SopsSecret` or via an
+still a secret: generate your own and, if you care, deliver it as a `SopsSecret`
+(encrypted in git, decrypted in-cluster, see [05-gitops](05-gitops.md)) or via an
 `existingSecret` rather than in plaintext values.
 
 ## Ingress
@@ -65,7 +70,9 @@ still works. The allowlist only works at all because ingress-nginx runs with
 
 ## As the assistant's search backend
 
-n8n reaches it over cluster DNS, no ingress involved:
+n8n reaches it over cluster DNS (every Service gets an internal hostname of the form
+`name.namespace.svc.cluster.local`, resolvable only from inside the cluster), no ingress
+involved:
 
 ```hcl
 { name = "N8N_INSTANCE_AI_SEARXNG_URL", value = "http://searxng-http.searxng.svc.cluster.local:8080" }
@@ -86,3 +93,14 @@ query. Check the stored tool output instead — see
 **What this buys, and what it doesn't.** SearXNG queries its own upstreams (Google, Brave,
 DuckDuckGo, Wikipedia) *from the cluster*, so this is not LAN-only search. What it buys is
 that your commercial API key and your client identity stay out of it.
+
+## Verify
+
+```bash
+kubectl -n searxng run verify --rm -i --restart=Never --image=curlimages/curl -- \
+  -s -o /dev/null -w "%{http_code}\n" \
+  "http://searxng-http.searxng.svc.cluster.local:8080/search?q=talos&format=json"
+```
+
+`200` proves the Service, cluster DNS, and the `json` format in one hit, on the exact URL
+n8n uses. A `403` means `json` is missing from `formats`.

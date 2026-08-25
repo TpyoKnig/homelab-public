@@ -1,5 +1,16 @@
 # Bootstrap — bare metal to running workloads
 
+This is the follow-along for [STORY.md](STORY.md), written for people who self-host with
+Docker and are new to Kubernetes and Talos. Before starting you need: the hardware from
+[01-hardware-and-network](docs/01-hardware-and-network.md) (three used office PCs plus a
+Raspberry Pi), a Cloudflare account with your domain on it, and a workstation to drive the
+cluster with `talosctl` / `kubectl` / `tofu` (Stage 0 turns the Pi into exactly that, so
+an SSH client and a browser are enough). Budget a weekend, not an afternoon: hands-on
+time is short, but downloads, reboots, and DNS propagation fill the gaps.
+
+Before this: four powered-off machines and a domain. After this: a three-node Kubernetes
+cluster serving n8n on your own hostnames, rebuildable from git.
+
 The single linear sequence. Every stage has a command and a ✅ verify line. Work top to
 bottom; don't skip the verifies.
 
@@ -22,16 +33,20 @@ compose stack, sets up UFW and unattended-upgrades, and creates `/opt/lab/{tofu,
 
 Then:
 
-1. **Build the Talos factory image.** [02-talos-cluster §1](docs/02-talos-cluster.md).
+1. **Build the Talos factory image.** Talos ships as a built-to-order image, and the
+   schematic ID names your exact build. [02-talos-cluster §1](docs/02-talos-cluster.md).
    Save the schematic ID; download the ISO to `/opt/lab/talos-images/`.
 2. **Flash the USB stick.**
    ```bash
    lsblk                                   # confirm the USB device — not your backup disk
    sudo dd if=/opt/lab/talos-images/metal-amd64-v1.13.7.iso of=/dev/sdX bs=4M status=progress conv=fsync
    ```
-3. **Reserve IPs** on the router: nodes `.101–.103`, VIP `.110`, ops host `.100`, NAS
-   `.239`, and **exclude `.200–.230` from the DHCP pool** for the Cilium LB range.
-4. **Stage the OpenTofu root.** Copy `iac/tofu/cluster/` to `/opt/lab/tofu/cluster/`,
+3. **Reserve IPs** on the router: nodes `.101–.103`, VIP `.110` (a floating IP the
+   control-plane nodes share), ops host `.100`, NAS `.239`, and **exclude `.200–.230`
+   from the DHCP pool** for the Cilium LB range (LAN IPs the cluster hands out to
+   services it exposes).
+4. **Stage the OpenTofu root.** OpenTofu is the open-source Terraform fork, and this
+   root describes the whole cluster. Copy `iac/tofu/cluster/` to `/opt/lab/tofu/cluster/`,
    `cp terraform.tfvars.example terraform.tfvars`, paste the install image, `tofu validate`.
 
 ✅ Grafana answers on `http://192.168.1.100:3000`; `tofu validate` is clean.
@@ -52,7 +67,10 @@ power loss **Last State** · Wake-on-LAN **on** · VT-x/VT-d **on**.
 
 ## Stage B — Boot Talos, capture facts  *(~10 min)*
 
-All three come up in maintenance mode on DHCP leases. Note the IPs from the router.
+Talos has no SSH and no shell. Everything from here on happens over its API with `talosctl`.
+
+All three come up in maintenance mode (running from USB, unconfigured, waiting for
+instructions) on DHCP leases. Note the IPs from the router.
 
 ```bash
 talosctl -n <MAINT_IP> get links --insecure   # NIC name and driver
@@ -89,13 +107,17 @@ talosctl -e 192.168.1.110 -n 192.168.1.101 health \
   --control-plane-nodes 192.168.1.101,192.168.1.102,192.168.1.103
 ```
 
-✅ `talosctl health` reports etcd healthy on all three.
-⚠️ `kubectl get nodes` shows **NotReady** — no CNI yet. Expected.
+✅ `talosctl health` reports etcd (the cluster's state store) healthy on all three.
+⚠️ `kubectl get nodes` shows **NotReady** — no CNI (the pod network) yet. Expected.
 🔴 **Start a timer: you have about ten minutes before Talos reboots CNI-less nodes.**
 
 ---
 
 ## Stage E — Cilium  *(immediately)*
+
+Cilium is the CNI from Stage D's warning: the network that connects pods (a pod is one or
+more containers deployed as a unit). Helm, Kubernetes' package manager, installs it from a
+chart.
 
 ```bash
 helm install cilium cilium/cilium -n kube-system --version 1.17.6 \
@@ -104,11 +126,15 @@ cilium status --wait
 kubectl apply -f iac/platform/cilium-lb-pool.yaml
 ```
 
-✅ All three nodes flip to **Ready**; `cilium status` all green.
+✅ All three nodes flip to **Ready** (`kubectl get nodes`); `cilium status` all green.
 
 ---
 
 ## Stage F — Longhorn  *(~5 min)*
+
+Longhorn turns each node's disk into replicated cluster storage, so data survives the node
+it was written on. The labels let its namespace (a named slice of the cluster) run
+privileged pods, which Longhorn needs for disk access.
 
 ```bash
 kubectl create namespace longhorn-system
@@ -121,11 +147,16 @@ helm install longhorn longhorn/longhorn -n longhorn-system \
   -f iac/platform/longhorn-values.yaml
 ```
 
-✅ All pods Running; `kubectl get sc` shows `longhorn (default)`.
+✅ All pods Running (`kubectl -n longhorn-system get pods`); `kubectl get sc` shows
+`longhorn (default)`.
 
 ---
 
 ## Stage G — cert-manager  *(~5 min, budget 20)*
+
+cert-manager fetches and renews Let's Encrypt certificates from inside the cluster. The
+ClusterIssuers configure it to prove domain ownership by writing DNS records through your
+Cloudflare token (DNS-01), so nothing needs to be reachable from the internet.
 
 ```bash
 helm upgrade --install cert-manager jetstack/cert-manager -n cert-manager --create-namespace \
@@ -148,6 +179,9 @@ cert-manager's propagation check stalls forever and you debug the wrong thing.
 
 ## Stage H — ingress-nginx  *(~5 min)*
 
+ingress-nginx is the cluster's shared reverse proxy: one LoadBalancer IP from the Cilium
+pool in front, per-hostname routing rules (Ingresses) behind it.
+
 ```bash
 helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
   -n ingress-nginx --create-namespace --version 4.11.3 \
@@ -160,6 +194,9 @@ helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
 
 ## Stage I — Cloudflare Tunnel  *(~10 min)*
 
+cloudflared dials out from the cluster to Cloudflare, and public traffic rides that
+connection back in, so the router keeps zero open ports.
+
 Create the tunnel and push the wildcard route ([04-cloudflare](docs/04-cloudflare.md)),
 then:
 
@@ -170,7 +207,8 @@ kubectl -n cloudflared create secret generic cloudflared-tunnel-token \
 kubectl apply -f iac/platform/cloudflared.yaml
 ```
 
-Deploy a throwaway `hello` Deployment + Ingress, add its proxied CNAME, and:
+Deploy a throwaway `hello` Deployment (the object that runs and restarts a set of
+pods) + Ingress, add its proxied CNAME, and:
 
 ✅ `curl -I https://hello.example.com` → `HTTP/2 200`, `server: cloudflare`. No inbound
 firewall rule anywhere. Delete the probe afterwards.
@@ -178,6 +216,9 @@ firewall rule anywhere. Delete the probe afterwards.
 ---
 
 ## Stage J — KEDA and metrics-server  *(~5 min)*
+
+KEDA is the autoscaler that will later grow n8n workers on queue depth. metrics-server
+feeds `kubectl top` and CPU-based scaling.
 
 ```bash
 helm install keda kedacore/keda -n keda --create-namespace
@@ -194,10 +235,12 @@ helm install metrics-server metrics-server/metrics-server -n kube-system \
 Do this **before** deploying anything you care about.
 
 1. `kubectl get nodes` → 3× Ready, control-plane, schedulable.
-2. **Node loss.** `kubectl cordon` + `drain` one node. The API stays up via the VIP; a
+2. **Node loss.** `kubectl cordon` + `drain` one node (mark it unschedulable, then
+   evict its pods). The API stays up via the VIP; a
    3-replica probe app keeps serving; external requests through the tunnel keep returning
    200. Uncordon.
-3. **Storage.** Create a PVC on `longhorn` → Bound, 3-replica volume created. Delete it.
+3. **Storage.** Create a PVC (a PersistentVolumeClaim, a pod's storage request) on
+   `longhorn` → Bound, 3-replica volume created. Delete it.
 4. **LoadBalancer.** `curl http://192.168.1.200` returns nginx's 404 — correct, since no
    Ingress matches the bare IP.
 5. **Ingress + TLS.** A probe hostname gets a Let's Encrypt prod cert in ~90 s via DNS-01
@@ -211,9 +254,13 @@ Do this **before** deploying anything you care about.
 
 ## Stage L — GitOps
 
+From here the cluster's desired state lives in a git repo and Argo CD keeps the cluster
+matching it: a change is a commit, and a rebuild is a clone.
+
 1. **Forgejo on the ops host** with its own Cloudflare tunnel —
    [06-ops-host](docs/06-ops-host.md#forgejo).
-2. **age keypair.** `age-keygen -o ~/.config/sops/age/keys.txt`. Public key into
+2. **age keypair.** sops uses it to encrypt secrets before they touch git.
+   `age-keygen -o ~/.config/sops/age/keys.txt`. Public key into
    `.sops.yaml`; private key into your password manager. Round-trip test with
    `sops -e -i` and `sops -d`.
 3. **Argo CD.**
@@ -286,6 +333,8 @@ kubectl -n flux-system get secret n8n-tofu-outputs \
 > (`cd iac/tofu/n8n && tofu init && tofu apply`) is entirely reasonable — just expect the
 > controller to reconcile over anything changed out-of-band once it owns it.
 
+Verify: `kubectl -n n8n get pods` → main, worker, and webhook pods all Running.
+
 ### n8n sandbox service
 
 **On Talos, deploy from [`TpyoKnig/n8n-sandbox-service`](https://github.com/TpyoKnig/n8n-sandbox-service)
@@ -353,6 +402,8 @@ Alloy, and the Prometheus scrape config against the cluster
 
 Then **check the cron log after the first night.** A cron script that can't find
 `talosctl` on `PATH` fails silently and indefinitely.
+
+Verify next morning: `sudo tail /var/log/etcd-snapshot.log` shows a snapshot and no errors.
 
 ---
 

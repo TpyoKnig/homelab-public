@@ -1,8 +1,19 @@
 # 08 · n8n sandbox service
 
-[`n8n-sandbox-service`](https://github.com/TpyoKnig/n8n-sandbox-service) gives the n8n AI
-Assistant somewhere to actually run code. Each sandbox is a Debian container managed by
-an in-container Docker daemon, created and torn down over a REST API.
+> **Retired 2026-08-20.** This service no longer runs in the lab and its repo is archived.
+> Kept here because the Talos-specific failure modes below (privileged DinD on an
+> immutable rootfs, the `0.0.1` pin, the CA-issuer dance) are the useful part.
+
+The short version for newcomers: this service gave the n8n AI Assistant somewhere to
+execute the code it writes, one disposable container per session. The install steps below
+are a record, not a recommendation. The reason to read on is Talos: putting
+Docker-in-Docker on an immutable rootfs (a read-only root filesystem that cannot be
+modified at runtime) forces choices you will meet again with any workload that needs
+privileges.
+
+Each sandbox from
+[`n8n-sandbox-service`](https://github.com/TpyoKnig/n8n-sandbox-service) is a Debian
+container managed by an in-container Docker daemon, created and torn down over a REST API.
 
 Without it, the assistant loads and chats but every code execution fails.
 
@@ -37,10 +48,12 @@ n8n-main ──X-Api-Key──> sandbox-api ──gRPC + mTLS──> runner (Din
 | Runner `StatefulSet` | Owns sandbox lifecycles via an inner Docker daemon |
 | sandbox containers | One per session, from a configurable Debian image |
 
-The runner is a **StatefulSet behind a headless Service** on purpose: the API must call
-the *specific* runner that owns a sandbox, so a load-balanced Service is not enough for
-exec/files/control. Stable pod DNS also makes the runner control certificate's SANs
-practical. **If a runner dies, sandboxes on it should be treated as lost.**
+The runner is a **StatefulSet behind a headless Service** on purpose (a StatefulSet gives
+each pod a stable name, and a headless Service makes each pod individually addressable):
+the API must call the *specific* runner that owns a sandbox, so a load-balanced Service is
+not enough for exec/files/control. Stable pod DNS also makes the runner control
+certificate's SANs practical. **If a runner dies, sandboxes on it should be treated as
+lost.**
 
 ## Why `dind` mode on Talos
 
@@ -126,9 +139,10 @@ In this cluster, deliver that Secret as a `SopsSecret` like every other credenti
 
 ### 3. mTLS certificates
 
-The API and runner authenticate to each other with mTLS. The chart's default
-`tls.mode: existingSecret` expects **four** TLS Secrets it does not create; left unset,
-both pods sit in `ContainerCreating` waiting for volumes that never appear.
+The API and runner authenticate to each other with mTLS (mutual TLS: each side presents a
+certificate and verifies the other's). The chart's default `tls.mode: existingSecret`
+expects **four** TLS Secrets it does not create; left unset, both pods sit in
+`ContainerCreating` waiting for volumes that never appear.
 
 `tls.mode: certManager` renders all four `Certificate` resources instead. cert-manager is
 already in this cluster ([03-platform-layer](03-platform-layer.md#cert-manager)), so this
@@ -251,13 +265,15 @@ outage rather than a credential mismatch, and sends you debugging the wrong comp
 ## Operational notes
 
 **Storage.** The inner Docker daemon writes image layers to `/var/lib/docker`. Sysbox
-would give the container its own; in `dind` mode the chart mounts an `emptyDir` capped by
+would give the container its own; in `dind` mode the chart mounts an `emptyDir` (scratch
+space on the node that is deleted with the pod) capped by
 `dindRunner.dockerDataRoot.emptyDirSizeLimit` (20 Gi default — deliberately not tiny, the
 sandbox image alone is most of a gigabyte, and an evicted pod takes every running sandbox
 with it). Set `dindRunner.dockerDataRoot.persistence.enabled=true` for a
 `volumeClaimTemplate` instead: survives a restart and skips re-pulling the sandbox image,
-at the cost of a PVC per replica. Never share one `/var/lib/docker` across runner pods —
-dockerd requires exclusive access to its graph.
+at the cost of a PVC (PersistentVolumeClaim, storage that survives pod restarts) per
+replica. Never share one `/var/lib/docker` across runner pods — dockerd requires
+exclusive access to its graph.
 
 **API state.** SQLite by default, with `api.persistence.enabled` on so sandbox routing
 survives a restart. Keep `api.replicaCount: 1` on SQLite. Multi-pod means Postgres via

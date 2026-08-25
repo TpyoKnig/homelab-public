@@ -1,9 +1,17 @@
 # 04 · Cloudflare — tunnel, DNS, certificates
 
-External access with **no inbound port open** anywhere. `cloudflared` runs in-cluster and
-dials *out* to Cloudflare's edge. Traffic to `<host>.example.com` hits Cloudflare,
-tunnels back to a cloudflared pod, hops to `ingress-nginx-controller` over ClusterIP, and
-reaches the workload.
+This is the layer that makes the cluster reachable from the internet. In the Docker world
+this job goes to a router port forward or a VPN, and both mean something at home is
+listening for the whole internet to find. This setup inverts that.
+
+Before this: every service is LAN-only. After this: every service has a public hostname
+that works from anywhere, with zero ports opened on the router.
+
+External access with **no inbound port open** anywhere. `cloudflared` (Cloudflare's
+tunnel client) runs in-cluster and dials *out* to Cloudflare's edge. Traffic to
+`<host>.example.com` hits Cloudflare, tunnels back to a cloudflared pod, hops to
+`ingress-nginx-controller` over ClusterIP (a virtual IP that only routes inside the
+cluster), and reaches the workload.
 
 ```
 browser ──https──> Cloudflare edge ──tunnel──> cloudflared pod ──http──> ingress-nginx ──> workload
@@ -28,7 +36,8 @@ source of truth to rebuild from.
 ## Creating a tunnel (remotely-managed)
 
 Config lives in Cloudflare, not in a local `config.yml`, so every route change is one API
-call and the pods only ever hold a connector token.
+call and the pods only ever hold a connector token (a credential that can run the tunnel
+but not reconfigure it).
 
 ```bash
 # 1. create the tunnel  (token needs Account:Cloudflare Tunnel:Edit)
@@ -78,18 +87,26 @@ spec:
 
 Verify with `GET /cfd_tunnel/<id>` — `status: healthy` and four connections per pod.
 
+```bash
+curl -sS -H "Authorization: Bearer $CF_TOKEN" \
+  https://api.cloudflare.com/client/v4/accounts/$ACCT_ID/cfd_tunnel/$TUNNEL_ID \
+  | grep -o '"status":"[^"]*"'          # want "status":"healthy"
+```
+
 ## The wildcard is on the tunnel, not on DNS
 
 This is the single most confusing part of the setup, so state it plainly:
 
 - **Tunnel routing has a wildcard.** `*.example.com` → ingress-nginx. Adding a service
   needs **no tunnel config change**.
-- **DNS has no wildcard.** Every hostname needs its own **proxied CNAME** to
+- **DNS has no wildcard.** Every hostname needs its own **proxied CNAME** (proxied is the
+  orange-cloud toggle: Cloudflare answers with its own IPs and relays the traffic) to
   `<TUNNEL_UUID>.cfargotunnel.com`, or traffic never reaches the tunnel at all. A wildcard
   DNS record can exist, but *proxying* one is an Enterprise feature, and an unproxied
   wildcard defeats the point.
 
-Check with `dig +short random-xyz.example.com @1.1.1.1` — it should be NXDOMAIN.
+Check with `dig +short random-xyz.example.com @1.1.1.1` — it should be NXDOMAIN (the DNS
+answer for a name that does not exist).
 
 ### Adding a hostname
 
@@ -133,9 +150,10 @@ blocked one still did not. Do not fight it — probe a couple of alternatives an
 Worth remembering for any hostname that pairs a product name with an official-sounding
 word.
 
-**Universal SSL covers one label only.** `*.example.com` is covered;
-`hooks.service.example.com` is not, and fails TLS at the edge without Advanced
-Certificate Manager. Keep every hostname single-level.
+**Universal SSL** (the free edge certificate every Cloudflare domain gets) **covers one
+label only.** `*.example.com` is covered; `hooks.service.example.com` is not, and fails
+TLS at the edge without Advanced Certificate Manager (a paid add-on). Keep every hostname
+single-level.
 
 **A failed record is worse than no record**, because the Ingress and certificate both
 look healthy. `dig` is the only honest check.

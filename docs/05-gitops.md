@@ -1,5 +1,12 @@
 # 05 · GitOps — Forgejo + Argo CD + SOPS
 
+GitOps means git holds the desired state of the cluster and a controller makes the cluster
+match it. Here the controller is Argo CD, and the loop is called reconciling (Argo compares
+git to the cluster and fixes the difference, continuously). Day to day there is no `kubectl
+apply` and no drift: change the repo and the cluster follows.
+
+Before this: the cluster was whatever I last typed. After this: it is whatever git says.
+
 Every cluster workload is reconciled from git. The git server itself runs **off** the
 cluster, on the Pi, behind its own Cloudflare tunnel.
 
@@ -40,6 +47,10 @@ homelab-gitops/
 
 ## The Application pattern
 
+An Application (Argo's unit of deployment: one YAML naming what to deploy and where) is how
+each workload reaches the cluster. The what is usually a Helm chart (Kubernetes' package
+format: templated manifests plus a values file of settings).
+
 Two sources: chart from upstream, values from git. No fork, no vendored chart, no wrapper.
 
 ```yaml
@@ -67,7 +78,9 @@ spec:
     syncOptions: [CreateNamespace=true, ServerSideApply=true]
 ```
 
-Bump a chart by editing `targetRevision`. Tune config by editing the values file.
+Bump a chart by editing `targetRevision`. Tune config by editing the values file. The
+`automated` policy is the no-drift enforcement: `prune: true` deletes anything removed from
+git, and `selfHeal: true` reverts anything edited by hand on the live cluster.
 
 > **Keep it to two sources.** Combining `chart` + `ref: values` + a `path:` for raw
 > manifests in one Application is intermittently unreliable — the values-ref gRPC call to
@@ -76,6 +89,10 @@ Bump a chart by editing `targetRevision`. Tune config by editing the values file
 > `<name>-secrets` as a single-source `path:`. One extra Application, much less flakiness.
 
 ## Secrets: SOPS + age + sops-secrets-operator
+
+SOPS (encrypts the secret values inside the YAML so the file can live in git) does the
+encrypting. age (a small keypair tool, think SSH keys built for file encryption) provides
+the keys it encrypts to.
 
 One age keypair covers the repo. The public key is committed in `.sops.yaml`; the private
 key lives in a password manager and in `~/.config/sops/age/keys.txt`
@@ -89,8 +106,9 @@ git commit -am "rotate thing" && git push
 The `.sops.yaml` creation rules encrypt only `data` and `stringData`, so `name`,
 `namespace` and `kind` stay readable and `git diff` remains meaningful.
 
-In-cluster, `sops-secrets-operator` mounts the age key, watches `SopsSecret` CRDs and
-reconciles them into native `Secret`s. From a Deployment's point of view nothing is
+In-cluster, `sops-secrets-operator` mounts the age key, watches `SopsSecret` CRDs
+(custom resource types added to the Kubernetes API) and reconciles them into native
+`Secret`s. From a Deployment's point of view nothing is
 unusual — it references `Secret/foo` as always.
 
 **Chosen over External Secrets + a vault Connect server** because files stay editable
@@ -113,6 +131,16 @@ Assumes the cluster is gone or beyond `kubectl apply`.
 
 Initial Argo password:
 `kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d`
+
+## Verify
+
+```bash
+kubectl -n argocd get applications.argoproj.io \
+  -o custom-columns=NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status
+```
+
+Every row should read `Synced` and `Healthy`. Anything else that persists past a few
+minutes has its explanation somewhere in the next section.
 
 ## Gotchas worth having read first
 
@@ -147,7 +175,8 @@ them.
   `serviceMonitor.enabled: false`.
 
 **Hand-written StatefulSets drift on kube-defaulted fields**, and that stalls the root
-app's sync-wave chain. Kubernetes auto-populates a dozen fields
+app's sync-wave chain (waves order Argo's applies: everything at one wave must be healthy
+before the next wave starts). Kubernetes auto-populates a dozen fields
 (`ports[].protocol`, `terminationMessagePath`, `revisionHistoryLimit`,
 `volumeClaimTemplates[].spec.volumeMode`, …) that Argo then flags forever. The child app
 stays OutOfSync, root waits on it at that wave, and **a brand-new Application at a later
@@ -162,8 +191,10 @@ failure is silent: empty strings get substituted and the app reports a downstrea
 error that reads like a bad password.
 
 **RWO PVC + default RollingUpdate = Multi-Attach deadlock** for any single-replica
-workload with block storage. The surge pod schedules on a different node, the volume
-cannot attach twice, and the new pod sits in `ContainerCreating` until you kill the old
+workload with block storage (a PVC is a claim on a persistent volume, and RWO means the
+volume can attach to only one node at a time). The surge pod schedules on a different
+node, the volume cannot attach twice, and the new pod sits in `ContainerCreating` until
+you kill the old
 one by hand. For one replica on RWO the answer is `strategy.type: Recreate`; many charts
 hardcode RollingUpdate and expose no knob, in which case a PostSync-hook Job that patches
 the live Deployment is the workaround.

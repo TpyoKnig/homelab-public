@@ -1,9 +1,30 @@
-# Building this lab
+# From `docker run n8n` to a three-node cluster
 
-Three used office PCs off eBay, a Raspberry Pi, and a Talos Kubernetes cluster that runs
-n8n behind a Cloudflare tunnel. The [docs](README.md) next to this are the how-to, every
-command in order. This is why it ended up looking like this, what it cost, and what broke
-on the way.
+If you self-host n8n, odds are it's one Docker container: SQLite in a volume, a reverse
+proxy in front, updates by pulling a new image and eating the restart. That's how most of
+the community runs it, it's the right way to start, and nothing here says stop.
+
+This is the next step, for when the infrastructure becomes part of the hobby: the same
+Community edition, no license, running in queue mode on a Talos Kubernetes cluster built
+from three used office PCs and a Raspberry Pi: dedicated workers autoscaling on queue
+depth, real Postgres, zero ports open on the router, the whole thing rebuildable from git.
+
+Everything here is reproducible from this repo. [BOOTSTRAP.md](BOOTSTRAP.md) is every
+command in order from bare metal to running workflows; [docs/](docs/) is the per-subsystem
+detail. This post is the why, the cost, and the potholes.
+
+## What changes, coming from Docker
+
+| One container | This build |
+| --- | --- |
+| n8n does everything in one process | Queue mode: a main for the editor and API, workers that execute, webhook processors that receive |
+| SQLite file in a volume | Postgres on CloudNativePG, storage replicated across three nodes |
+| A restart drops whatever was running | Room to grow: KEDA scales workers to 10+ on queue depth; restarting the editor doesn't touch executions |
+| Port forward or VPN to reach webhooks | Cloudflare tunnel dialing out; no inbound port anywhere |
+| Backup is copying the volume and hoping | etcd snapshots, replicated volumes, a NAS cold copy, and the rebuild path gets exercised by every deploy |
+
+If the left column is doing the job, keep it. The right column is for when you want to own
+the platform too, and it costs less than one mid-range GPU.
 
 ## Why bother
 
@@ -11,9 +32,13 @@ I wanted somewhere to run automation, mostly n8n, that wasn't a monthly bill and
 subject to somebody else's roadmap. Two constraints ended up making most of the later
 decisions for me.
 
-Nothing inbound. No port forward, no LAN address in public DNS. If the only way in is a
-tunnel I opened from the inside, then what's exposed is a Cloudflare hostname and not my
-router.
+Nothing inbound. No port forward, no LAN address in public DNS. "Nobody would bother with
+my house" stopped being true once the bothering got automated: the whole IPv4 space gets
+port-scanned continuously, and AI-assisted tooling increasingly handles the follow-up too,
+fingerprinting what answered, picking an exploit and trying it, at a cost per target of
+roughly nothing. The reliable way out of that pipeline is to not answer at all. If the only way in
+is a tunnel I opened from the inside, what's exposed is a Cloudflare hostname with
+Cloudflare's bot filtering in front of it, not my router.
 
 The cluster isn't precious. I should be able to wipe all three machines and get everything
 back from git. Which means git can't live in the cluster, and neither can the monitoring
@@ -24,26 +49,23 @@ if I'd started by installing Kubernetes and figured out the rest afterward.
 
 ## Buying the hardware
 
-I didn't get these from Amazon. I found a seller on eBay listing Lenovo ThinkCentre M920q
-Tinys one at a time, i5-8500T, 16 GB, 256 GB NVMe, and messaged them about a bundle. Turned
-out they had a lot more than three on the shelf and were trickling out inventory.
+I didn't get these from Amazon. I found a seller on eBay,
+[Babboo's Bazaar](https://www.ebay.com/str/babboosbazaar), listing Lenovo ThinkCentre M920q
+Tinys one at a time, i5-8500T, 16 GB, 256 GB NVMe, and messaged him about a bundle. Turned
+out he had a lot more than three on the shelf and was trickling out inventory.
 
-The quote came back at $160 a machine including shipping, with a menu of upgrades priced
-per box: 1x16 GB free, 2x16 GB for $50, 2x32 GB for $225 and a QA build first because
-64 GB only works on later BIOS revisions. I took the 2x16 GB option on all three, so
-$210 a machine, $630 all in. They threw in a PCIe riser and bracket on one of them for
-nothing.
-
-The invoice splits that $630 into $450 for machines and $180 for shipping. That isn't what
-shipping cost. They count QA and assembly as a handling fee and drop the listed item price
-to the insurable cost of the components, which is cleaner for customs and better for their
-margin. Same total either way. $672.53 delivered with tax, for three HA nodes and 96 GB of
-RAM. Less than one mid-range GPU.
+The quote came back as a bundle: RAM upgrades installed per box, a QA pass before anything
+ships, and a PCIe riser and bracket thrown in on one of them for nothing. Worth knowing if
+you plan to max these boxes: 64 GB only works on later BIOS revisions, so ask before
+ordering it. $672.53 delivered with tax, for three HA nodes and 96 GB of RAM. Less than one
+mid-range GPU.
 
 If you're shopping for this, message the seller. Every used-enterprise-hardware storefront
-is one person with a shelf, and a lot of three is worth a conversation to them. Ask for the
-RAM you want instead of buying sticks separately, $50 a box to go from 16 GB to 32 GB is a
-price that no longer exists anywhere in 2026.
+is one person with a shelf, and a lot of three is worth a conversation to them. Mine turned
+into a lot more than three: I've gone back to the same store for multiple systems since,
+and my entire extended stack came from him. Ask for the
+RAM you want instead of buying sticks separately, seller-installed upgrades beat the parts
+market by a margin that no longer exists anywhere in 2026.
 
 What actually matters in the spec is shorter than you'd think. A wired NIC, because the
 control-plane VIP and Cilium's L2 announcements need a real L2 segment and Wi-Fi won't do.
@@ -62,17 +84,23 @@ an 8 GB Pi 5 was $80 and nobody thought that was worth mentioning.
 
 ## The drives took two tries
 
-I bought three HGST Ultrastar 8 TB enterprise drives from an eBay storefront, $125 each,
-$414.55 with shipping and tax. They showed up five days later.
+I bought four HGST Ultrastar 8 TB enterprise drives from an eBay storefront, $414.55 with
+shipping and tax. They showed up five days later.
 
-All three were dead. Not degraded, not throwing SMART warnings, none of them spun up at
+All four were dead. Not degraded, not throwing SMART warnings, none of them spun up at
 all. I tested each one two ways, through a USB dock and directly on a SATA port, and got
-nothing from any of them. Three for three isn't bad luck, it's a seller who never plugged
+nothing from any of them. Four for four isn't bad luck, it's a seller who never plugged
 them in.
 
-The return went through without much argument and eBay refunded me on August 11th. Then I
-bought three used 8 TB HGSTs off someone on Reddit for $414, same drives, same money, from
-a stranger with a post history instead of a storefront with a returns policy. Those work.
+The refund was its own project. The seller's answer was "just send it back", and after I
+did, no refund came. I filed a case with eBay, waited the three business days they ask for,
+and then had to escalate a second time before the money actually moved, on August 11th.
+Budget for that too: a dead-on-arrival return isn't one errand, it's a case you have to
+keep pushing.
+
+Then I bought four used 8 TB HGSTs off someone on Reddit for $414, same drives, same
+money, from a stranger with a post history instead of a storefront with a returns policy.
+Those work.
 
 There isn't a tidy lesson in that. Recertified-from-a-store was the safe option on paper
 and it's the one that failed. What I'd actually change is testing drives the day they land,
@@ -285,7 +313,8 @@ mode needs a modified container runtime on the node, which is precisely the thin
 immutable-rootfs distro won't let you do. `dind` exists for this case. If you're on Talos,
 use [tag `0.0.1`](https://github.com/TpyoKnig/n8n-sandbox-service/tree/0.0.1). The chart is
 published by git tag only, so pin the tag or the commit, there's no chart version to
-reference.
+reference. The repo is archived now. It keeps working at the pin, just don't expect
+updates.
 
 The env var names cost me an evening. n8n's docs name `N8N_INSTANCE_AI_SANDBOX_API_URL` and
 `N8N_INSTANCE_AI_SANDBOX_API_KEY`. Those two strings appear in no shipped build. The code
@@ -381,11 +410,7 @@ upgrade already finished. Point `talosconfig` at a specific node IP for upgrades
 **OpenTofu and Terraform don't share a module registry.** I published the n8n module to the
 Terraform registry, so `source = "TpyoKnig/n8n/kubernetes"` worked under Terraform and failed
 with `Module not found` under OpenTofu. Same syntax, different index, and a config that's
-correct but looks broken. I ran the `git::...?ref=` form for a while and then submitted to
-OpenTofu's registry too. Their automation validated it, pushed its branch, and then died on
-the final `gh pr create` during a GitHub API outage, which left an orphaned branch that every
-retry afterwards failed to fast-forward past. Editing the issue didn't re-fire it either. It
-sat for three days until a maintainer opened the PR by hand. Publishing to one index buys you
+correct but looks broken. The module is on both registries now. Publishing to one index buys you
 nothing on the other, so check which one your binary is asking before you go rewriting config.
 
 **The NAS wouldn't do NFSv4.** No export carried `fsid=0`, so there's no v4 pseudo-root and
@@ -400,8 +425,8 @@ way to override it, so the backup target became CIFS/SMB instead. Verify with
 | 3x ThinkCentre M920q (i5-8500T, 32 GB, 256 GB NVMe) | $672.53 |
 | UniFi UNAS 4 | $451.76 |
 | 2x M.2 tray + 2x Samsung PM9A1 512 GB (NAS cache) | $193.23 |
-| 3x HGST 8 TB, used, off Reddit | $414.00 |
-| 3x HGST 8 TB from an eBay storefront | ~~$414.55~~ refunded, all three DOA |
+| 4x HGST 8 TB, used, off Reddit | $414.00 |
+| 4x HGST 8 TB from an eBay storefront | ~~$414.55~~ refunded, all four DOA |
 | **Total** | **$1,731.52** |
 
 Plus the Pi 5 at $80 from Micro Center in early 2025.
@@ -433,7 +458,8 @@ Not much structurally, the two constraints at the top held up better than I expe
 smaller things. Write the backup verification before writing the backup, see nineteen
 nights. And check the NAS's NFS version before designing storage around it instead of after.
 
-The full build guide, every command in order from bare metal to running workloads, is in
-[BOOTSTRAP.md](BOOTSTRAP.md), and the per-subsystem detail is under [docs/](docs/). It's all
-sanitised, `example.com` and `192.168.1.0/24` and no live keys, but the architecture and the
-gotchas are real.
+If your n8n is a container today and you want it to be a cluster, start at
+[BOOTSTRAP.md](BOOTSTRAP.md), every command in order from bare metal to running
+workflows, with the per-subsystem detail under [docs/](docs/). It's all sanitised,
+`example.com` and `192.168.1.0/24` and no live keys, but the architecture and the gotchas
+are real.

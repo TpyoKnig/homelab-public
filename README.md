@@ -34,7 +34,7 @@ is still reachable, and the cluster can be rebuilt from it.
 
 | Doc | What |
 | --- | --- |
-| [STORY.md](STORY.md) | The build log — why it looks like this, what it cost, what broke. Start here if you're deciding whether to build one |
+| [STORY.md](STORY.md) | The blog post, from one n8n Docker container to this cluster: why, what it cost, what broke. Start here |
 | [BOOTSTRAP.md](BOOTSTRAP.md) | Bare metal → running workloads, in order, with verify steps |
 | [docs/01-hardware-and-network.md](docs/01-hardware-and-network.md) | The three machines, the Pi, BIOS, IP plan |
 | [docs/02-talos-cluster.md](docs/02-talos-cluster.md) | Talos image factory + the OpenTofu cluster root |

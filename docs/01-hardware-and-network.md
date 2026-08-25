@@ -1,17 +1,27 @@
 # 01 · Hardware & Network
 
+This layer is everything below Kubernetes: three small PCs, their firmware, the flat
+network they share, and the addresses nothing else on the LAN is allowed to take. Talos
+(a minimal Linux that runs nothing but Kubernetes: no shell, no SSH, managed entirely
+over an API) asks little of hardware, but what it does need (wired ethernet, predictable
+IPs, the right boot order) has to be true before any cluster exists. These are also the
+decisions that cost the most to change later, so they get pinned down first.
+
+Before this: three used PCs, a Pi, and a NAS in a pile. After this: every box has a
+reserved IP, a recorded NIC and disk, and firmware that survives a power cut.
+
 ## Bill of materials
 
 | Item | Qty | Notes |
 | --- | --- | --- |
 | Lenovo ThinkCentre M920q Tiny | 3 | 8th/9th-gen Intel T-series, single onboard Intel I219 NIC (`e1000e`) |
-| RAM | 32 GB per node | 96 GB total. Comfortable for Longhorn + Cilium + queue-mode n8n + Postgres |
+| RAM | 32 GB per node | 96 GB total. Comfortable for Longhorn (replicated block storage) + Cilium (the cluster's network layer) + queue-mode n8n + Postgres |
 | NVMe SSD | ~256 GB each | M.2 2280. System disk **and** Longhorn data dir live here |
 | USB stick | 1 | ≥1 GB, for the Talos factory ISO, re-used across all three nodes |
-| Wired ethernet | 3 ports (+1 for NAS) | Same L2 segment. No Wi-Fi — the control-plane VIP and Cilium L2 announcements need it |
+| Wired ethernet | 3 ports (+1 for NAS) | Same L2 segment (same wired network, no routing in between). No Wi-Fi — the control-plane VIP (one IP that floats between the three nodes) and Cilium L2 announcements need it |
 | Raspberry Pi 5 8 GB | 1 | Ops host: off-cluster observability + bastion. See [06-ops-host](06-ops-host.md) |
 | NAS (4-bay, RAID 6) | 1 | Backup target and RWX shares. **Not** Longhorn's primary storage |
-| 3.5" SATA drives | 3 | 8 TB 7200 RPM enterprise, bought used. Populate the NAS. Test every drive the day it arrives — a set bought recertified from a storefront arrived 3-for-3 dead and had to be returned |
+| 3.5" SATA drives | 4 | 8 TB 7200 RPM enterprise, bought used. Populate the NAS. Test every drive the day it arrives — a set bought recertified from a storefront arrived 4-for-4 dead and had to be returned |
 
 Any small-form-factor x86 box works. The three things that matter: wired NIC, an NVMe
 big enough for the OS plus Longhorn replicas, and a BIOS that can be told to power on
@@ -44,7 +54,12 @@ grabs those addresses.
 | Ops host (Pi 5) | `192.168.1.100` | DHCP reservation. Deliberately outside the cluster |
 | **Cilium LB pool** | `192.168.1.200–230` | `CiliumLoadBalancerIPPool`, excluded from DHCP |
 
-In-use LoadBalancer IPs:
+All three nodes are control planes (they run Kubernetes itself, plus etcd, the cluster's
+state database) and all three are schedulable, meaning ordinary workloads land on them
+too. There are no dedicated worker nodes at this size.
+
+In-use LoadBalancer IPs (addresses Cilium hands out from that pool, one per exposed
+service):
 
 | IP | Service |
 | --- | --- |
@@ -55,7 +70,7 @@ In-use LoadBalancer IPs:
 
 The **VIP** gives one stable `https://192.168.1.110:6443` that floats across the three
 control-plane nodes and survives any single node dying. It is what `kubeconfig` and
-`talosconfig` point at.
+`talosconfig` (the client config files for `kubectl` and `talosctl`) point at.
 
 > One exception, learned the hard way: point `talosconfig` at a **specific node IP** when
 > running `talosctl upgrade-k8s`. The gRPC session to the VIP goes stale when the API
@@ -68,10 +83,12 @@ control-plane nodes and survives any single node dying. It is what `kubeconfig` 
   `<TUNNEL_UUID>.cfargotunnel.com`. No port forwarding, no LAN IP is public.
 - Cluster ingress is `ingress-nginx` on `192.168.1.200`. LAN clients can hit it by IP;
   everything external arrives through the tunnel.
-- TLS is cert-manager with a Let's Encrypt DNS-01 ClusterIssuer, so the same certificate
-  works on both paths. See [04-cloudflare](04-cloudflare.md).
-- **Split-horizon DNS was skipped.** One hostname per service, everything tunnelled. LAN
-  names can be added later if latency ever matters.
+- TLS is cert-manager with a Let's Encrypt DNS-01 ClusterIssuer (domain ownership proven
+  by a DNS TXT record, nothing inbound required), so the same certificate works on both
+  paths. See [04-cloudflare](04-cloudflare.md).
+- **Split-horizon DNS was skipped** (answering LAN queries with local IPs instead of
+  sending traffic out through Cloudflare and back). One hostname per service, everything
+  tunnelled. LAN names can be added later if latency ever matters.
 
 ### Router DNS interception
 
@@ -85,7 +102,8 @@ changes is to make CoreDNS forward over DNS-over-TLS — see
 
 Talos uses predictable interface names, and the same hardware can surface as `enp0s31f6`,
 `eno2` or `eth0` depending on firmware. Boot the factory ISO, let the node sit in
-maintenance mode on a DHCP lease, then:
+maintenance mode (booted from the stick into RAM, API up, nothing installed on disk) on a
+DHCP lease, then:
 
 ```bash
 MAINT_IP=192.168.1.<dhcp-lease>          # NOT yet one of the reservations
@@ -94,7 +112,8 @@ talosctl -n "$MAINT_IP" get disks --insecure    # /dev/nvme0n1 etc.
 ```
 
 Prefer a **`deviceSelector`** matching the **driver** over a hardcoded interface name in
-the machine config. It survives firmware quirks and is identical across all three boxes:
+the machine config (the one YAML file that defines an entire Talos node). It survives
+firmware quirks and is identical across all three boxes:
 
 ```yaml
 network:
@@ -111,8 +130,24 @@ Record what you find:
 | node-2 | `aa:bb:cc:00:00:02` | `eno2` | `e1000e` | `/dev/nvme0n1` |
 | node-3 | `aa:bb:cc:00:00:03` | `eno2` | `e1000e` | `/dev/nvme0n1` |
 
-The Cilium L2 announcement policy matches interfaces by regex, so the NIC name matters
-there too — `^eno.*` for these boxes, not the more commonly copy-pasted `^enp.*`.
+The Cilium L2 announcement policy (the config that makes the LB pool IPs answer on the
+LAN) matches interfaces by regex, so the NIC name matters there too — `^eno.*` for these
+boxes, not the more commonly copy-pasted `^enp.*`.
+
+### Verify
+
+Add the DHCP reservations from the recorded MACs, then boot each node back into the ISO.
+Maintenance mode runs from RAM, so the one stick can leave all three sitting at their
+reserved addresses at once:
+
+```bash
+for ip in 192.168.1.101 192.168.1.102 192.168.1.103; do
+  talosctl -n "$ip" get links --insecure >/dev/null \
+    && echo "$ip up" || echo "$ip NOT answering"
+done
+```
+
+A node that does not answer is a boot-order problem or a reservation typo, in that order.
 
 ## NAS
 
@@ -120,7 +155,8 @@ A 4-bay appliance in RAID 6, used for two things:
 
 1. **Off-cluster backup target** — the Pi's etcd snapshots and self-backups, plus
    Longhorn's backup store.
-2. **RWX volumes** — `ReadWriteMany` claims that Longhorn (block, RWO) cannot serve.
+2. **RWX volumes** — `ReadWriteMany` claims (volumes several pods can mount and write at
+   once) that Longhorn (block, RWO) cannot serve.
 
 It is deliberately **not** Longhorn's primary storage. Longhorn replicates across the
 three node NVMes; the NAS holds the cold copy so a pool-wide corruption or a two-node

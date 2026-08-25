@@ -3,6 +3,13 @@
 Every pull request on every Forgejo repo gets an automatic AI review comment. Nothing to
 click, nothing to run.
 
+That comment comes from PR-Agent, an open-source reviewer you run yourself: it reads each
+diff and asks a model API for a review, and that model call is the only traffic it sends
+outside the LAN. Every change to this lab lands as a pull request, cluster config and docs
+alike, so an automatic review on each diff catches mistakes before they merge into a
+running cluster. Before this: a PR merged with whatever scrutiny I had left that evening.
+After this: every PR gets a reviewer before merge, whether I remember to ask or not.
+
 [PR-Agent](https://github.com/The-PR-Agent/pr-agent) is the original open-source PR
 reviewer. Qodo built it and handed it to a community-owned org in April 2026; it is MIT
 now. The Qodo-branded product advertised today is a separate commercial thing — this is
@@ -13,11 +20,12 @@ a first-class `gitea` provider with full `/describe`, `/review`, `/improve` and 
 support. No fork, no adapter, no shim.
 
 Manifests: [`iac/apps/pr-agent/`](../iac/apps/pr-agent/) (Namespace, Deployment, Service,
-and the SopsSecret template) and
+and the SopsSecret template: the app's isolated scope, the spec that keeps its container
+running, its stable in-cluster address, and its secrets encrypted to live in git) and
 [`iac/argocd/app-pr-agent.yaml`](../iac/argocd/app-pr-agent.yaml). Upstream publishes no
-Helm chart for the open-source image (the commercial Qodo Merge on-prem product ships one
-as a tarball to its customers, which is a different thing), so this is the one workload
-here deployed from raw YAML by a **single-source**
+Helm chart (Kubernetes' app packaging format) for the open-source image (the commercial
+Qodo Merge on-prem product ships one as a tarball to its customers, which is a different
+thing), so this is the one workload here deployed from raw YAML by a **single-source**
 Argo Application rather than the two-source chart+values pattern.
 
 > Image naming changed at the handover. Old images are `codiumai/pr-agent:*` and stop at
@@ -46,9 +54,11 @@ Argo Application rather than the two-source chart+values pattern.
 Both hops that touch Forgejo use the **LAN** address, not the public hostname — the
 traffic never leaves the house and never touches the Cloudflare tunnel.
 
-**No ingress, no DNS record, no TLS — deliberately.** A public hostname would add
-internet-facing attack surface for zero benefit. Authentication is the sha256 HMAC that
-Forgejo signs each delivery with.
+**No ingress (the Kubernetes reverse-proxy layer), no DNS record, no TLS — deliberately.**
+A public hostname would add internet-facing attack surface for zero benefit.
+Authentication is the sha256 HMAC that Forgejo signs each delivery with (a signature
+computed from the payload plus a shared webhook secret, so PR-Agent can check that each
+POST really came from Forgejo).
 
 ## What it posts
 
@@ -120,11 +130,11 @@ env (which is global). Useful keys: `[pr_reviewer] extra_instructions`, `[config
 
 | Thing | Value |
 | --- | --- |
-| Namespace | `pr-agent`, PSS **restricted** (runs as uid 1000; the image would otherwise run as root) |
+| Namespace | `pr-agent`, PSS (Pod Security Standards) **restricted** (runs as uid 1000; the image would otherwise run as root) |
 | Image | `pragent/pr-agent:0.42.0-gitea_app`, **digest-pinned** |
-| Service | `pr-agent-lan`, LoadBalancer `192.168.1.203:3000` |
+| Service | `pr-agent-lan`, LoadBalancer `192.168.1.203:3000` (a dedicated LAN IP that Cilium answers on for the cluster) |
 | Forgejo side | the LB IP must be in `FORGEJO__webhook__ALLOWED_HOST_LIST` |
-| Secrets | Forgejo PAT, webhook HMAC, model API key — all in one SopsSecret |
+| Secrets | Forgejo PAT (personal access token), webhook HMAC, model API key — all in one SopsSecret |
 
 **Model config:** change `CONFIG__MODEL` and `CONFIG__FALLBACK_MODELS` **together**. The
 image defaults to OpenAI models; if there is no OpenAI key in the cluster, a half-changed
@@ -136,6 +146,17 @@ appear in PR-Agent's token map (`pr_agent/algo/__init__.py`) or be paired with
 admin token. The webhook HMAC is shared between the SopsSecret and every Forgejo webhook —
 rotating means editing **both sides together**, or every delivery 401s at the signature
 check.
+
+## Verify
+
+```bash
+kubectl -n pr-agent rollout status deploy/pr-agent
+```
+
+`deployment "pr-agent" successfully rolled out` means the receiver is running. For the
+full loop, open a throwaway PR on any repo that has the webhook: the `/describe`,
+`/review` and `/improve` comments should land within a minute or two. If nothing shows,
+work the chain below.
 
 ## Troubleshooting
 

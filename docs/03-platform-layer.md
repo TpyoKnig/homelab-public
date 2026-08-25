@@ -4,10 +4,19 @@ Turns a bare Talos cluster into something workloads can land on. Install in this
 each layer assumes the previous one is healthy. Values files live in
 [`iac/platform/`](../iac/platform/).
 
+Coming from Docker, this layer covers what the daemon and a reverse proxy container gave
+you between them: pod networking, persistent volumes, TLS, a front door, autoscaling
+signals. Kubernetes ships with none of it and makes you pick each piece. Nearly
+everything installs with Helm (the Kubernetes package manager: a chart is the package, a
+values file is its config).
+
+Before this: three NotReady nodes running nothing. After this: storage, ingress and TLS on tap.
+
 ## Cilium
 
-CNI, kube-proxy replacement, LoadBalancer IPs and Hubble. The machine config already set
-`cni: none` and `proxy: disabled`.
+CNI (the plugin that wires pod networking), kube-proxy replacement (Cilium takes over the
+Service routing kube-proxy normally does), LoadBalancer IPs and Hubble (Cilium's traffic
+observability UI). The machine config already set `cni: none` and `proxy: disabled`.
 
 The Talos-specific values matter — the chart defaults do not work here:
 
@@ -38,7 +47,7 @@ cilium status --wait
 kubectl get nodes            # all three flip to Ready
 ```
 
-LoadBalancer IPs, replacing MetalLB:
+LoadBalancer IPs, replacing MetalLB (the add-on most bare-metal clusters run for this):
 
 ```yaml
 apiVersion: cilium.io/v2alpha1
@@ -56,14 +65,14 @@ spec:
   loadBalancerIPs: true
 ```
 
-If a Service stays `<pending>`, it is almost always the pool not applied, the pool
-overlapping the DHCP range, or that interface regex.
+If a Service stays `<pending>` (the EXTERNAL-IP column of `kubectl get svc`), it is almost
+always the pool not applied, the pool overlapping the DHCP range, or that interface regex.
 
 ## Longhorn
 
 Replicated block storage. Needs the `iscsi-tools` and `util-linux-tools` extensions
-(already in the image) and a **privileged** namespace — without the labels, Longhorn's
-system pods never start:
+(already in the image) and a **privileged** namespace (labels that lift the pod security
+defaults blocking host access) — without the labels, Longhorn's system pods never start:
 
 ```bash
 kubectl create namespace longhorn-system
@@ -98,8 +107,8 @@ defaultBackupStore:
 Three things that cost real time:
 
 - **`defaultSettings.backupTarget` is a silent no-op** in Longhorn 1.9+. The setting was
-  removed in favour of the `BackupTarget` CR; `defaultBackupStore` is the key that
-  populates it.
+  removed in favour of the `BackupTarget` CR (a custom resource, Longhorn's own object
+  type in the Kubernetes API); `defaultBackupStore` is the key that populates it.
 - **Clearing a target needs a manual patch** — removing the Helm value leaves the CR
   populated:
   `kubectl -n longhorn-system patch backuptarget default --type merge -p '{"spec":{"backupTargetURL":""}}'`
@@ -127,8 +136,11 @@ times the volume size. Verify a restore quarterly — an unrestored backup is a 
 
 ## RWX volumes
 
-Longhorn is RWO. For `ReadWriteMany` — which queue-mode n8n needs, since main, worker and
-webhook pods do not otherwise share a filesystem — add the CSI drivers for the NAS:
+Longhorn is RWO (one node mounts a volume read-write at a time). For `ReadWriteMany`
+(RWX, a volume several pods can mount read-write at once) — which queue-mode n8n needs,
+since main, worker and webhook pods do not otherwise share a filesystem — add the CSI
+drivers (storage plugins, each installing a StorageClass that volume claims request by
+name) for the NAS:
 
 - `csi-driver-smb` → StorageClass `smb-unas`, `reclaimPolicy: Delete`. **Prefer this.**
 - `csi-driver-nfs` → StorageClass `nfs-unas`, `reclaimPolicy: Retain` (see the reclaim
@@ -149,7 +161,9 @@ one writes, the other reads it back.
 
 ## CoreDNS over DoT
 
-Needed if the router hijacks outbound UDP/53. Patch the `kube-system/coredns` Corefile:
+Needed if the router hijacks outbound UDP/53. DoT (DNS over TLS) moves the upstream
+lookups to an encrypted session the router cannot rewrite. Patch the `kube-system/coredns`
+Corefile (the config for CoreDNS, the cluster's own DNS server):
 
 ```
 forward . tls://1.1.1.1 tls://1.0.0.1 tls://8.8.8.8 {
@@ -168,6 +182,9 @@ downside even once the router is fixed — worth keeping as the known-good path.
 
 ## cert-manager
 
+The in-cluster ACME client: it issues and renews Let's Encrypt certificates as Kubernetes
+objects, the job Caddy or Traefik handled by itself on the Docker box.
+
 ```bash
 helm upgrade --install cert-manager jetstack/cert-manager -n cert-manager --create-namespace \
   --version v1.16.5 --set crds.enabled=true \
@@ -182,8 +199,9 @@ which forwards over DoT) is what makes the propagation self-check pass behind a
 DNS-intercepting router. A cert that stalls for five minutes on propagation-check and
 then issues in ninety seconds once this is set is the tell.
 
-ClusterIssuer, DNS-01 against Cloudflare — works for internal and external names alike,
-since nothing has to be reachable:
+ClusterIssuer (the cluster-wide recipe cert-manager uses to get certificates), DNS-01
+(the ACME challenge answered with a DNS TXT record) against Cloudflare — works for
+internal and external names alike, since nothing has to be reachable:
 
 ```yaml
 apiVersion: cert-manager.io/v1
@@ -208,6 +226,9 @@ production rate limits are low and unforgiving.
 tunnel, additionally `Account:Cloudflare Tunnel:Edit`.
 
 ## ingress-nginx
+
+The cluster's reverse proxy. Ingress resources (per-hostname routing rules stored in the
+cluster) tell it where to route, so there is no nginx.conf to hand-edit.
 
 Install as `Service type=LoadBalancer`; Cilium hands it `192.168.1.200`.
 
@@ -235,11 +256,13 @@ request appears to come from the tunnel and an allowlist admits everyone or nobo
 helm install keda kedacore/keda -n keda --create-namespace
 ```
 
-Nothing Talos-specific. Needed for queue-depth worker autoscaling in n8n.
+Nothing Talos-specific. Needed for queue-depth worker autoscaling in n8n. KEDA scales
+pods on external metrics like Redis queue length, numbers the stock HPA (Horizontal Pod
+Autoscaler, which only watches CPU and memory) cannot see.
 
 ## metrics-server
 
-Talos kubelets present self-signed certificates, so:
+Talos kubelets (the per-node agent that runs pods) present self-signed certificates, so:
 
 ```bash
 helm install metrics-server metrics-server/metrics-server -n kube-system \
@@ -247,6 +270,17 @@ helm install metrics-server metrics-server/metrics-server -n kube-system \
 ```
 
 Without it every CPU-based HPA reads `<unknown>/70%` forever.
+
+## Verify
+
+One pass over the whole layer before building on it:
+
+```bash
+kubectl get pods -A | grep -vE 'Running|Completed'   # header only, anything else is a problem
+kubectl get storageclass                             # longhorn (default), smb-unas, nfs-unas
+kubectl get clusterissuer                            # letsencrypt-prod shows READY True
+kubectl top nodes                                    # real numbers, not a Metrics API error
+```
 
 ## Resource budget
 

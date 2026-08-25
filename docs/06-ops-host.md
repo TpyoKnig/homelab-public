@@ -1,10 +1,21 @@
 # 06 · Ops host (Raspberry Pi 5)
 
+The ops host is the one box in this build that is not Kubernetes: a Raspberry Pi 5
+running Debian and Docker Compose, which should feel like home if you arrived from
+`docker run`. It sits outside the cluster on purpose: monitoring has to keep working
+when the cluster is down, which is exactly when you need it, and git has to hold the
+repo you rebuild the cluster from, so it cannot live on the thing being rebuilt.
+
+Before this: a cluster you can only inspect from inside itself, with the rebuild source
+on your laptop. After this: a Pi that watches the cluster from outside and serves the
+git repo that recreates it.
+
 An out-of-cluster box doing three jobs the cluster should not do for itself:
 
-1. **Observability** — Prometheus, Loki, Tempo and Grafana, scraping the cluster from
-   outside so they survive a total-cluster incident or a `tofu destroy`. Don't monitor a
-   thing with itself.
+1. **Observability** — Prometheus (metrics), Loki (logs), Tempo (traces) and Grafana
+   (the UI over all three), scraping the cluster from outside so they survive a
+   total-cluster incident or a `tofu destroy`. Don't monitor a thing with itself. (A
+   scrape is a pull: Prometheus fetches each target's `/metrics` URL on a timer.)
 2. **Git** — Forgejo behind its own Cloudflare tunnel, so the source of truth outlives
    the cluster.
 3. **Management** — `talosctl`, `kubectl`, `helm`, `tofu`, the Terraform state, and the
@@ -111,9 +122,9 @@ exist yet:
   static_configs: [{ targets: ['tempo:3200'] }]
 ```
 
-Worth the two lines. Tempo's metrics-generator is what turns spans into the
-`traces_spanmetrics_*` series the node-latency dashboard reads, so if it stalls the
-dashboard goes flat with nothing else to warn you. The two to alert on:
+Worth the two lines. Tempo's metrics-generator is what turns spans (the timed steps that
+make up a trace) into the `traces_spanmetrics_*` series the node-latency dashboard reads,
+so if it stalls the dashboard goes flat with nothing else to warn you. The two to alert on:
 
 | Metric | Means |
 |---|---|
@@ -126,8 +137,10 @@ the endpoint answers 403 `Lifecycle API is not enabled.`
 
 ### Scraping the cluster from outside
 
-Discovery via the Kubernetes API, scraping through the **API-server proxy**. One bearer
-token, no per-service LoadBalancer, and new pods are covered automatically.
+Discovery via the Kubernetes API, scraping through the **API-server proxy** (the API
+server will forward an HTTP request to any pod, so Prometheus only ever needs a route to
+one address). One bearer token, no per-service LoadBalancer, and new pods are covered
+automatically.
 
 ```yaml
 # /opt/obs/prometheus.yml (one job; the others follow the same shape)
@@ -157,10 +170,12 @@ token, no per-service LoadBalancer, and new pods are covered automatically.
 ```
 
 Same pattern for node-exporter, app `/metrics` endpoints, and — with `role: node` — the
-kubelet's `/metrics` and `/metrics/cadvisor`, which is what feeds per-pod CPU and memory
-panels.
+kubelet's `/metrics` and `/metrics/cadvisor` (the kubelet is the per-node agent that
+actually runs your pods, and cadvisor is its built-in container stats), which is what
+feeds per-pod CPU and memory panels.
 
-Cluster side, the RBAC it needs:
+Cluster side, the RBAC it needs (RBAC is Kubernetes's permission system, and this grants
+the token read-only access to exactly what the scrapes touch):
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -180,9 +195,24 @@ plus a ServiceAccount, a binding, and a long-lived token Secret annotated
 the Prometheus container.
 
 **The cluster runs only exporters** — `node-exporter` DaemonSet and `kube-state-metrics`,
-plain Helm charts, no operator, no CRDs. The `monitoring` namespace needs
-`pod-security.kubernetes.io/enforce=privileged`, since node-exporter wants hostPID and
-hostNetwork.
+plain Helm charts, no operator, no CRDs. An exporter is a small service that publishes
+something else's stats as `/metrics` for Prometheus to pull (node-exporter: hardware and
+OS, kube-state-metrics: the state of Kubernetes objects), and a DaemonSet runs one copy
+of a pod on every node. The `monitoring` namespace needs
+`pod-security.kubernetes.io/enforce=privileged` (Pod Security Admission, the namespace
+gate that otherwise rejects pods asking for host access), since node-exporter wants
+hostPID and hostNetwork.
+
+### Verify
+
+From the Pi, with the cluster jobs in `prometheus.yml` and the config reloaded:
+
+```bash
+curl -s http://localhost:9090/api/v1/targets | grep -o '"health":"[^"]*"' | sort | uniq -c
+```
+
+Every line should read `up`. A `down` target is one Prometheus can discover but not
+scrape: drop the `grep` for the full JSON, which names the failing job and the error.
 
 ### Logs — Grafana Alloy → Loki
 
@@ -225,7 +255,8 @@ Alloy also needs the `privileged` PSA label for the `/var/log/pods` host mount.
 
 ### Traces — Alloy OTLP receiver → Tempo
 
-The same Alloy DaemonSet doubles as the in-cluster OTLP collector: `otelcol.receiver.otlp`
+The same Alloy DaemonSet doubles as the in-cluster OTLP collector (OTLP is the
+OpenTelemetry protocol, the standard wire format for traces): `otelcol.receiver.otlp`
 on `0.0.0.0:4318` and `:4317`, batched, exported to the Pi's Tempo. A dedicated
 `Service/alloy-otlp` (ClusterIP, both ports) gives workloads a stable DNS name.
 
@@ -318,6 +349,9 @@ prompts at import time.
 
 ### Retention
 
+Retention is how long each store keeps data before deleting it, and every store here
+configures it somewhere different:
+
 | Store | Retention | Configured in |
 | --- | --- | --- |
 | Prometheus | 30 d | `--storage.tsdb.retention.time` |
@@ -329,8 +363,9 @@ Loki's default is **never expire**. Set this on day one, not after the disk fill
 
 ## Prebuilt Explore queries
 
-Dashboards cover what you watch continuously. Explore is for the follow-up question,
-and by default it opens empty, so everyone retypes TraceQL from memory.
+Dashboards cover what you watch continuously. Explore (Grafana's ad-hoc query view) is
+for the follow-up question, and by default it opens empty, so everyone retypes TraceQL
+(Tempo's trace query language) from memory.
 
 Grafana 11.3 has no shareable query library — that arrived in later releases. What it
 does have is per-user query history with a starred flag and an API to write to it, which

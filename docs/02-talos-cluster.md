@@ -1,6 +1,14 @@
 # 02 · Talos cluster (OpenTofu)
 
-The whole cluster is declared in OpenTofu using the
+Talos is a Linux distro that runs Kubernetes and nothing else: no shell, no SSH, no package
+manager. Every node is driven by its machine config (the one YAML file that fully describes
+a node), so the whole cluster can be declared in code and rebuilt from it. That declaration
+is this layer, ending in a kubeconfig (the credentials file kubectl uses to reach the
+cluster).
+
+Before this: three boxes in maintenance mode. After this: a working cluster.
+
+The whole cluster is declared in OpenTofu (the open source Terraform fork) using the
 [`siderolabs/talos`](https://registry.terraform.io/providers/siderolabs/talos/latest)
 provider. This doc stops at "cluster is up with a kubeconfig"; everything after that is
 [03-platform-layer](03-platform-layer.md).
@@ -9,8 +17,10 @@ Source: [`iac/tofu/cluster/`](../iac/tofu/cluster/).
 
 ## 1. Image Factory schematic — before booting anything
 
-Longhorn needs two system extensions present in the Talos **install image**, not just the
-ISO. Bake them at [factory.talos.dev](https://factory.talos.dev/):
+Longhorn (the replicated storage layer, installed in [03](03-platform-layer.md)) needs two
+system extensions (Talos has no package manager, so extra drivers and tools are baked into
+the OS itself) present in the Talos **install image**, not just the ISO. Bake them at
+[factory.talos.dev](https://factory.talos.dev/) (the hosted Talos image builder):
 
 ```yaml
 # schematic.yaml
@@ -48,7 +58,8 @@ iac/tofu/cluster/
     └── controlplane.yaml       schedulable CPs, cni:none, proxy:disabled, VIP
 ```
 
-> **State is a secret.** `talos_machine_secrets` puts the cluster PKI in Terraform state.
+> **State is a secret.** `talos_machine_secrets` puts the cluster PKI (the CA keys every
+> node trusts) in Terraform state (the local file where tofu records what it built).
 > Keep it `0600` on a backed-up host, or use an encrypted remote backend. Losing state
 > does not lose the cluster, but it means re-importing to manage it again.
 >
@@ -86,6 +97,9 @@ Talos v1.10+ uses `/var/mnt/longhorn`, not the older `/var/lib/longhorn`. Keep t
 and Longhorn's `defaultDataPath` in sync or Longhorn silently writes to the ephemeral
 overlay.
 
+All three nodes here are control planes (the nodes that run the Kubernetes API and etcd,
+the database that holds all cluster state), so `controlplane.yaml` lands on every node too.
+
 `patches/controlplane.yaml`:
 
 ```yaml
@@ -105,12 +119,17 @@ machine:
           ip: ${vip_ip}
 ```
 
+The `vip` is one shared virtual IP for the Kubernetes API: whichever control plane holds it
+answers, and it moves if that node goes down. Everything from here on talks to the VIP, not
+to any single node.
+
 > **Schema gotcha:** on Talos v1.13 the key is `cluster.proxy.disabled`. Older docs and
 > examples show `cluster.network.proxy.disabled`, which v1.13 silently ignores — you get
-> kube-proxy running alongside Cilium's replacement and a confusing network.
+> kube-proxy (the stock Kubernetes service router) running alongside Cilium's replacement
+> and a confusing network.
 
-Both `cni: none` and `proxy: disabled` must be set **before** bootstrap. Changing them
-afterwards is a rebuild.
+Both `cni: none` and `proxy: disabled` must be set **before** bootstrap (telling exactly one
+node to start etcd and form the cluster). Changing them afterwards is a rebuild.
 
 ## 4. The resources
 
@@ -178,8 +197,17 @@ talosctl -e 192.168.1.110 -n 192.168.1.101 health \
   --control-plane-nodes 192.168.1.101,192.168.1.102,192.168.1.103
 ```
 
-Nodes sit **`NotReady`** until a CNI is running. That is expected — and it is a **timer**:
-Talos reboots nodes that have had no CNI for about ten minutes. Go straight to Cilium.
+The health check above went through `talosctl` (the Talos CLI, node-level). `kubectl` is the
+Kubernetes-level view:
+
+```bash
+kubectl get nodes
+# expect all three nodes, STATUS NotReady
+```
+
+Nodes sit **`NotReady`** until a CNI (the pod network plugin) is running. That is expected —
+and it is a **timer**: Talos reboots nodes that have had no CNI for about ten minutes. Go
+straight to Cilium, the first install in [03-platform-layer](03-platform-layer.md).
 
 ## 6. Registry mirrors (optional, but note how they work)
 
