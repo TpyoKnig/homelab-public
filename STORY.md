@@ -257,8 +257,8 @@ from outside costs me some convenience, no automatic ServiceMonitor discovery an
 scrape config written by hand, and buys me a monitoring stack that's loudest exactly when
 the cluster is quietest.
 
-The Pi also runs Forgejo, its Actions runner, and the backup cron jobs. It's the most
-load-bearing $80 in the lab, which is why it gets its own tunnel, its own backups, and a
+The Pi also runs Forgejo, its Actions runner, and the backup cron jobs. It's the $80 box
+the whole lab depends on, which is why it gets its own tunnel, its own backups, and a
 documented rebuild path.
 
 Detail: [docs/06-ops-host.md](docs/06-ops-host.md).

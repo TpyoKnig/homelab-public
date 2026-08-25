@@ -36,7 +36,7 @@ config:
       formats: [html, json]    # json is what makes it usable as an LLM tool
 ```
 
-`formats: [html, json]` is the load-bearing line for the assistant use case — without
+`formats: [html, json]` is the line the assistant use case depends on — without
 `json`, SearXNG serves humans only.
 
 The `secret_key` signs session cookies and the limiter token, not credentials. It is
