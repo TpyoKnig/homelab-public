@@ -81,15 +81,40 @@ talosctl -n <MAINT_IP> get disks --insecure   # confirm /dev/nvme0n1
 
 ---
 
-## Stage C — Reconcile the OpenTofu root  *(~5 min)*
+## Stage C — Match the config to your hardware  *(~5 min)*
 
-Only touch `terraform.tfvars` if Stage B revealed a mismatch:
+Stage B told you what the machines actually have. This stage makes the OpenTofu config
+agree with it. The file to edit is `/opt/lab/tofu/cluster/terraform.tfvars`, the one you
+created in Stage 0. Its defaults assume an Intel NIC (driver `e1000e`), an NVMe disk at
+`/dev/nvme0n1`, and a `192.168.1.x` LAN. If Stage B showed exactly that, edit nothing and
+skip to the dry run.
 
-- NIC driver not `e1000e` → set `nic_driver`.
-- Install disk not `/dev/nvme0n1` → set `install_disk`.
-- Different LAN → set `node_ips`, `vip_ip`, `gateway`.
+If something differed, open the file, remove the leading `#` from the matching line, and
+put in your value:
 
-✅ `tofu plan` shows: secrets + 3 config-applies + 1 bootstrap + 1 kubeconfig.
+```hcl
+# nic_driver   = "e1000e"          # replace with the driver "get links" showed
+# install_disk = "/dev/nvme0n1"    # replace with the disk "get disks" showed
+# node_ips     = ["192.168.1.101", "192.168.1.102", "192.168.1.103"]
+# vip_ip       = "192.168.1.110"
+# gateway      = "192.168.1.1"
+```
+
+The last three only change if your LAN is not `192.168.1.x`, and they must match the
+reservations you made in Stage 0.
+
+Then dry-run it. `tofu init` downloads the provider (the plugin OpenTofu drives Talos
+with), and `tofu plan` prints what would be created without touching anything:
+
+```bash
+cd /opt/lab/tofu/cluster
+tofu init
+tofu plan
+```
+
+✅ The plan ends with `Plan: 6 to add, 0 to change, 0 to destroy`: machine secrets, one
+config apply per node, one bootstrap, one kubeconfig. If it errors instead, the message
+names the `terraform.tfvars` line to fix.
 
 ---
 
@@ -97,7 +122,7 @@ Only touch `terraform.tfvars` if Stage B revealed a mismatch:
 
 ```bash
 cd /opt/lab/tofu/cluster
-tofu init && tofu apply
+tofu apply     # init already ran in Stage C
 
 tofu output -raw kubeconfig  > /opt/lab/kube/config  && chmod 600 /opt/lab/kube/config
 tofu output -raw talosconfig > /opt/lab/talos/config && chmod 600 /opt/lab/talos/config
