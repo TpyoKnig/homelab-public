@@ -136,7 +136,7 @@ registry addresses against a different index that does not carry this module —
 ## Upstream repos used here
 
 - [`TpyoKnig/terraform-kubernetes-n8n`](https://github.com/TpyoKnig/terraform-kubernetes-n8n) — the n8n module (CNPG + Valkey + KEDA + split ingress)
-- [`TpyoKnig/n8n-sandbox-service`](https://github.com/TpyoKnig/n8n-sandbox-service) at tag `0.0.1` — isolated code-execution sandboxes for the n8n AI Assistant, in `dataPlane.mode: dind` — the mode that exists for immutable-rootfs distributions, verified on Talos v1.13.7. Its Helm chart is vendored in that repo and **published by git tag only**, so reference the tag or commit rather than a chart version
+- [`n8n-io/n8n-sandbox-service`](https://github.com/n8n-io/n8n-sandbox-service): isolated code-execution sandboxes for the n8n AI Assistant, started as this lab's repo and now maintained upstream by n8n. Since chart `0.4.0` ([PR #126](https://github.com/n8n-io/n8n-sandbox-service/pull/126)), immutable-rootfs distributions such as Talos use `runner.isolation: privileged` with `runner.acknowledgePrivileged: true`, no tag pin required. The chart is vendored in the repo at `charts/n8n-sandbox-service`
 
 ## Reading the placeholders
 

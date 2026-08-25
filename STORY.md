@@ -300,7 +300,7 @@ through both Cloudflare and nginx.
 n8n's assistant can write and execute code, but only if you give it a sandbox. Without one
 it loads, chats happily, and every execution fails.
 
-That's what [n8n-sandbox-service](https://github.com/TpyoKnig/n8n-sandbox-service) is: an
+That's what [n8n-sandbox-service](https://github.com/n8n-io/n8n-sandbox-service) is: an
 API Deployment plus a runner StatefulSet, talking gRPC over mTLS, spawning one throwaway
 Debian container per session.
 
@@ -308,19 +308,27 @@ Debian container per session.
 n8n-main --X-Api-Key--> sandbox-api --gRPC + mTLS--> runner --> sandbox containers
 ```
 
-On Talos it runs in `dind` mode, and that's not a preference. The chart's default `sysbox`
-mode needs a modified container runtime on the node, which is precisely the thing an
-immutable-rootfs distro won't let you do. `dind` exists for this case. If you're on Talos,
-use [tag `0.0.1`](https://github.com/TpyoKnig/n8n-sandbox-service/tree/0.0.1). The chart is
-published by git tag only, so pin the tag or the commit, there's no chart version to
-reference. The repo is archived now. It keeps working at the pin, just don't expect
-updates.
+Talos can't run the chart's preferred `sysbox` isolation, and that's not a preference:
+sysbox needs a modified container runtime on the node, which is precisely the thing an
+immutable-rootfs distro won't let you do. When I built this, the workaround was a pinned
+tag of my own repo running plain Docker-in-Docker. That's history now: the project moved
+upstream to n8n, and since chart `0.4.0`
+([PR #126](https://github.com/n8n-io/n8n-sandbox-service/pull/126)) Talos is supported
+out of the box with `runner.isolation: privileged` plus
+`runner.acknowledgePrivileged: true`. The render fails until you acknowledge the weaker
+security boundary, which is the right kind of friction. No tag pin needed anymore.
 
-The env var names cost me an evening. n8n's docs name `N8N_INSTANCE_AI_SANDBOX_API_URL` and
-`N8N_INSTANCE_AI_SANDBOX_API_KEY`. Those two strings appear in no shipped build. The code
-reads `N8N_SANDBOX_SERVICE_URL` and `N8N_SANDBOX_SERVICE_API_KEY`. Nothing errors on an env
-var n8n doesn't read, so what you get is an assistant that loads and can't execute
-anything, quietly.
+Wiring n8n to it is four env vars on the main pods:
+
+```
+N8N_INSTANCE_AI_SANDBOX_ENABLED=true
+N8N_INSTANCE_AI_SANDBOX_PROVIDER=n8n-sandbox
+N8N_SANDBOX_SERVICE_URL=http://<sandbox-api service>:8080
+N8N_SANDBOX_SERVICE_API_KEY=<one of the service's api-keys values>
+```
+
+Get the last two names exactly right. n8n doesn't error on an env var it never reads, so a
+misspelled name produces an assistant that loads and can't execute anything, quietly.
 
 SearXNG is self-hosted metasearch and doubles as the assistant's search backend. Worth
 knowing that n8n resolves search providers in a fixed order, and setting a Brave key takes

@@ -1,8 +1,11 @@
 # 08 · n8n sandbox service
 
-> **Retired 2026-08-20.** This service no longer runs in the lab and its repo is archived.
-> Kept here because the Talos-specific failure modes below (privileged DinD on an
-> immutable rootfs, the `0.0.1` pin, the CA-issuer dance) are the useful part.
+> **Moved upstream.** This lab retired its copy on 2026-08-20, and n8n now maintains the
+> service at [n8n-io/n8n-sandbox-service](https://github.com/n8n-io/n8n-sandbox-service).
+> Since chart `0.4.0` ([PR #126](https://github.com/n8n-io/n8n-sandbox-service/pull/126))
+> immutable-rootfs distros are supported directly, so the `0.0.1` pin below is history.
+> Kept here because the Talos-specific failure modes (privileged DinD on an immutable
+> rootfs, the CA-issuer dance) are still the useful part.
 
 The short version for newcomers: this service gave the n8n AI Assistant somewhere to
 execute the code it writes, one disposable container per session. The install steps below
@@ -12,22 +15,21 @@ modified at runtime) forces choices you will meet again with any workload that n
 privileges.
 
 Each sandbox from
-[`n8n-sandbox-service`](https://github.com/TpyoKnig/n8n-sandbox-service) is a Debian
+[`n8n-sandbox-service`](https://github.com/n8n-io/n8n-sandbox-service) is a Debian
 container managed by an in-container Docker daemon, created and torn down over a REST API.
 
 Without it, the assistant loads and chats but every code execution fails.
 
-> **If you are on Talos — or any immutable-rootfs distro — use this repo at tag `0.0.1`.**
+> **On Talos, or any immutable-rootfs distro, today: use the upstream chart, not a pin.**
+> Chart `0.4.0` and later renders the same Docker-in-Docker runner without sysbox:
+> ```yaml
+> runner:
+>   isolation: privileged
+>   acknowledgePrivileged: true   # the render fails until you accept the weaker boundary
 > ```
-> repoURL:         https://github.com/TpyoKnig/n8n-sandbox-service.git
-> targetRevision:  0.0.1
-> path:            charts/n8n-sandbox-service
-> ```
-> That tag ships `dataPlane.mode: dind`, which is the mode to pick when you cannot modify
-> the node runtime. The chart's default `sysbox` mode cannot work there at all — see
-> [Why `dind` mode on Talos](#why-dind-mode-on-talos). (`external` mode installs on Talos
-> too, but it deploys only the API and expects the runner to run outside the chart, so it
-> moves the problem off-cluster rather than solving it here.)
+> plus `pod-security.kubernetes.io/enforce=privileged` on the namespace. Follow the
+> [upstream k8s quickstart](https://github.com/n8n-io/n8n-sandbox-service/blob/main/docs/quickstart-k8s.md).
+> Everything below documents the `0.0.1`-era install this lab ran.
 
 Pinned at the git tag **`0.0.1`** (commit `3a52ff8`), whose vendored chart declares
 `version: 0.3.0`, `appVersion: 0.1.0`. The chart is **not published to a registry** —
@@ -56,6 +58,11 @@ certificate's SANs practical. **If a runner dies, sandboxes on it should be trea
 lost.**
 
 ## Why `dind` mode on Talos
+
+The names below are the `0.3.0`-era chart this lab ran. Upstream chart `0.4.0` renamed
+them: `dind` became `runner.isolation: privileged`, `sysbox` became
+`runner.isolation: sysbox`, and `dataPlane.mode` is now `in-cluster` or `external`. The
+reasoning is unchanged.
 
 The chart offers three data-plane modes:
 
@@ -252,11 +259,8 @@ plus `N8N_SANDBOX_SERVICE_API_KEY` from a Secret, holding one of the values in t
 service's `api-keys` list.
 
 **The variable names are `N8N_SANDBOX_SERVICE_URL` and `N8N_SANDBOX_SERVICE_API_KEY`.**
-n8n's own documentation names `N8N_INSTANCE_AI_SANDBOX_API_URL` and
-`N8N_INSTANCE_AI_SANDBOX_API_KEY`; those strings appear in no shipped build. n8n does not
-error on an environment variable it never reads, so the documented spelling gives you an
-assistant that loads and cannot execute anything, silently. Verified by grepping the
-running bundle.
+n8n does not error on an environment variable it never reads, so a misspelled name gives
+you an assistant that loads and cannot execute anything, silently.
 
 **The URL and the key move together.** Rotate one without the other and the editor and
 assistant chat keep working while only code execution breaks — which reads as a sandbox
