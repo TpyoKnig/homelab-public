@@ -1,26 +1,38 @@
 # 02 · Talos cluster (OpenTofu)
 
-Talos is a Linux distro that runs Kubernetes and nothing else: no shell, no SSH, no package
-manager. Every node is driven by its machine config (the one YAML file that fully describes
-a node), so the whole cluster can be declared in code and rebuilt from it. That declaration
-is this layer, ending in a kubeconfig (the credentials file kubectl uses to reach the
-cluster).
+Talos is a Linux distro that runs Kubernetes and nothing else. It has no login of any kind:
+no shell, no SSH, no package manager. The whole operating system is one read-only image,
+and the only way to manage a node is its API, using the `talosctl` command from another
+machine. Instead of logging in, you hand each node a machine config: one YAML file that
+fully describes the node (network, disks, what to install). Because a node is nothing more
+than its config, the whole cluster can be written down as code and rebuilt from that code.
+This doc is that code. It ends with a kubeconfig, the credentials file that `kubectl` (the
+standard Kubernetes command-line tool) uses to reach the cluster.
 
-Before this: three boxes in maintenance mode. After this: a working cluster.
+Before this: three boxes in maintenance mode (booted from USB, unconfigured, waiting for
+instructions). After this: a working cluster.
 
-The whole cluster is declared in OpenTofu (the open source Terraform fork) using the
+The cluster is declared in OpenTofu, the open source fork of Terraform. If you have not
+used either: you write files describing what should exist, run one command, and the tool
+makes reality match, remembering what it built. It drives Talos through the
 [`siderolabs/talos`](https://registry.terraform.io/providers/siderolabs/talos/latest)
-provider. This doc stops at "cluster is up with a kubeconfig"; everything after that is
+provider, the plugin that teaches OpenTofu to speak the Talos API. This doc stops at
+"cluster is up with a kubeconfig". Everything after that is
 [03-platform-layer](03-platform-layer.md).
 
 Source: [`iac/tofu/cluster/`](../iac/tofu/cluster/).
 
-## 1. Image Factory schematic — before booting anything
+## 1. Image Factory schematic, before booting anything
 
-Longhorn (the replicated storage layer, installed in [03](03-platform-layer.md)) needs two
-system extensions (Talos has no package manager, so extra drivers and tools are baked into
-the OS itself) present in the Talos **install image**, not just the ISO. Bake them at
-[factory.talos.dev](https://factory.talos.dev/) (the hosted Talos image builder):
+Talos has no package manager, so extra drivers and tools cannot be added after the fact.
+They are baked into the OS image itself as system extensions, and every build of the image
+is made to order. Longhorn, the replicated storage layer installed in
+[03](03-platform-layer.md), needs two of them, and they must be present in the Talos
+**install image**, not only the ISO.
+
+The build service is [factory.talos.dev](https://factory.talos.dev/), the hosted Talos
+image builder known as Image Factory. You describe the build in a small YAML file called a
+schematic, upload it, and get back a schematic ID that names your exact build:
 
 ```yaml
 # schematic.yaml
@@ -31,19 +43,33 @@ customization:
       - siderolabs/util-linux-tools
 ```
 
+Run the upload from the ops host (any machine with `curl` works). The reply is a line of
+JSON whose `id` field is your schematic ID. Save it: it gets pasted twice below.
+
 ```bash
 curl -s -X POST --data-binary @schematic.yaml https://factory.talos.dev/schematics
 # => {"id":"<SCHEMATIC_ID>"}
 ```
 
-That yields two artifacts:
+That one ID names two different artifacts, and the difference matters:
 
-- **Boot ISO** (write to USB): `https://factory.talos.dev/image/<SCHEMATIC_ID>/v1.13.7/metal-amd64.iso`
-- **Install image** (goes in the machine config): `factory.talos.dev/installer/<SCHEMATIC_ID>:v1.13.7`
+```mermaid
+flowchart LR
+    y["schematic.yaml<br>lists the extensions"] -->|"POST"| id["one SCHEMATIC_ID"]
+    id --> iso["Boot ISO<br>written to the USB stick"]
+    id --> inst["Install image<br>named in the machine config"]
+    iso --> boot["node boots from USB<br>into maintenance mode"]
+    inst --> disk["node installs to its NVMe<br>and reboots into this"]
+```
 
-> **The extensions must be in the install image.** Putting them only in the ISO means
-> they vanish the moment the node installs to disk and reboots, and Longhorn's pods then
-> fail with `CreateContainerError` for reasons that point nowhere near the image.
+- **Boot ISO** (write to USB and boot the machines from it): `https://factory.talos.dev/image/<SCHEMATIC_ID>/v1.13.7/metal-amd64.iso`
+- **Install image** (what Talos copies onto the internal disk, referenced from the machine config): `factory.talos.dev/installer/<SCHEMATIC_ID>:v1.13.7`
+
+> [!WARNING]
+> **The extensions must be in the install image**, the right-hand box above. Putting them
+> only in the ISO means they vanish the moment the node installs to disk and reboots, and
+> Longhorn's pods then fail with `CreateContainerError` for reasons that point nowhere
+> near the image.
 
 ## 2. Repo layout
 
@@ -58,18 +84,28 @@ iac/tofu/cluster/
     └── controlplane.yaml       schedulable CPs, cni:none, proxy:disabled, VIP
 ```
 
-> **State is a secret.** `talos_machine_secrets` puts the cluster PKI (the CA keys every
-> node trusts) in Terraform state (the local file where tofu records what it built).
-> Keep it `0600` on a backed-up host, or use an encrypted remote backend. Losing state
-> does not lose the cluster, but it means re-importing to manage it again.
->
-> `tofu output -raw kubeconfig` and `tofu output -raw talosconfig` are the recovery path
-> whenever the client configs go missing — which happens, e.g. after an unplanned reboot
-> of the ops host. The cluster is unaffected; only the client configs need re-emitting.
+> [!CAUTION]
+> **State is a secret.** Terraform state is the local file where tofu records everything
+> it built. Here it also holds the cluster PKI, the certificate-authority keys every node
+> trusts, generated by `talos_machine_secrets`. Whoever has that file can control the
+> cluster, so keep it `0600` on a backed-up host, or use an encrypted remote backend.
+> Losing state does not lose the cluster, but it means re-importing before tofu can
+> manage it again.
+
+> [!TIP]
+> If the client credential files (kubeconfig for `kubectl`, talosconfig for `talosctl`)
+> ever go missing, which happens, for example after an unplanned reboot of the ops host,
+> the cluster itself is unaffected. `tofu output -raw kubeconfig` and
+> `tofu output -raw talosconfig` print fresh copies from state.
 
 ## 3. Machine config patches
 
-`patches/common.yaml` — applied to every node:
+The provider generates a complete machine config from Talos defaults, and these two files
+are patches layered on top: only the settings this cluster changes. The `${...}`
+placeholders are filled in from your `terraform.tfvars`.
+
+`patches/common.yaml` is applied to every node. It sets where Talos installs itself,
+switches the network from DHCP to a static setup, and adds the mount Longhorn needs:
 
 ```yaml
 machine:
@@ -93,12 +129,20 @@ machine:
         options: [bind, rshared, rw]
 ```
 
-Talos v1.10+ uses `/var/mnt/longhorn`, not the older `/var/lib/longhorn`. Keep this mount
-and Longhorn's `defaultDataPath` in sync or Longhorn silently writes to the ephemeral
-overlay.
+The `deviceSelector` picks the network card by its driver name rather than an interface
+name like `eth0`, which varies with firmware. You confirmed the driver while the nodes sat
+in maintenance mode.
 
-All three nodes here are control planes (the nodes that run the Kubernetes API and etcd,
-the database that holds all cluster state), so `controlplane.yaml` lands on every node too.
+> [!WARNING]
+> Talos v1.10 and later use `/var/mnt/longhorn`, not the older `/var/lib/longhorn`. Keep
+> this mount and Longhorn's `defaultDataPath` in sync, or Longhorn silently writes into
+> the ephemeral overlay (scratch space, not the disk) and your data is not where you think
+> it is.
+
+In Kubernetes, control-plane nodes are the ones that run the cluster's own machinery: the
+API server, and etcd, the database that holds all cluster state. Larger clusters keep them
+separate from the workers. With three machines total, all three are control planes and all
+three also run normal workloads, so `controlplane.yaml` lands on every node too.
 
 `patches/controlplane.yaml`:
 
@@ -119,26 +163,52 @@ machine:
           ip: ${vip_ip}
 ```
 
+Two of those lines switch off Kubernetes defaults. `cni: none` tells Talos not to install
+a CNI, the plugin that gives pods their network. `proxy: disabled` turns off kube-proxy,
+the stock component that routes traffic to services. Cilium, installed first thing in
+[03](03-platform-layer.md), takes over both jobs.
+
 The `vip` is one shared virtual IP for the Kubernetes API: whichever control plane holds it
 answers, and it moves if that node goes down. Everything from here on talks to the VIP, not
 to any single node.
 
-> **Schema gotcha:** on Talos v1.13 the key is `cluster.proxy.disabled`. Older docs and
-> examples show `cluster.network.proxy.disabled`, which v1.13 silently ignores — you get
-> kube-proxy (the stock Kubernetes service router) running alongside Cilium's replacement
-> and a confusing network.
+> [!WARNING]
+> **Schema gotcha.** On Talos v1.13 the key is `cluster.proxy.disabled`. Older docs and
+> examples show `cluster.network.proxy.disabled`, which v1.13 silently ignores. The result
+> is kube-proxy running alongside Cilium's replacement, and a confusing network.
 
-Both `cni: none` and `proxy: disabled` must be set **before** bootstrap (telling exactly one
-node to start etcd and form the cluster). Changing them afterwards is a rebuild.
+> [!IMPORTANT]
+> Bootstrap is the one-time command that tells exactly one node to start etcd and form the
+> cluster. Both `cni: none` and `proxy: disabled` must be set **before** that moment.
+> Changing them afterwards is a rebuild.
 
 ## 4. The resources
+
+This is the heart of `main.tf`, trimmed to what matters. Read top to bottom, it does what
+the repo tree promised: generate cluster secrets, render the machine config, apply it to
+all three nodes, then bootstrap one of them.
+
+```mermaid
+flowchart LR
+    s["talos_machine_secrets<br>the cluster PKI"] --> c["talos_machine_configuration<br>defaults plus your two patches"]
+    c --> a1["apply to node-1"]
+    c --> a2["apply to node-2"]
+    c --> a3["apply to node-3"]
+    a1 --> b["talos_machine_bootstrap<br>node-1 only, once"]
+    a2 --> b
+    a3 --> b
+    b --> k["talos_cluster_kubeconfig"]
+```
+
+The three arrows into `bootstrap` are the `depends_on` below, drawn out. Bootstrap must
+not start until every node already has its config.
 
 ```hcl
 resource "talos_machine_secrets" "this" {}
 
 data "talos_machine_configuration" "cp" {
   cluster_name     = var.cluster_name
-  cluster_endpoint = var.cluster_endpoint     # https://192.168.1.110:6443 — the VIP
+  cluster_endpoint = var.cluster_endpoint     # https://192.168.1.110:6443, the VIP
   machine_type     = "controlplane"
   machine_secrets  = talos_machine_secrets.this.machine_secrets
   config_patches   = [
@@ -174,14 +244,26 @@ resource "talos_machine_bootstrap" "this" {
 Two things not to change:
 
 - **`depends_on` on the bootstrap.** The provider has a
-  [known race](https://github.com/siderolabs/terraform-provider-talos/issues/265) where
-  bootstrap can run ahead of the config apply.
-- **Bootstrap runs on exactly one node.** etcd forms from there; the others join.
+  [known race](https://github.com/siderolabs/terraform-provider-talos/issues/265): without
+  this line, bootstrap can fire before the node configs have been applied.
+- **Bootstrap runs on exactly one node.** etcd forms from there and the others join it.
 
-`talos_cluster_kubeconfig` is a **resource**, not a data source — it was deprecated as a
-data source in provider 0.7.
+One provider quirk to know: `talos_cluster_kubeconfig` is a **resource**, not a data
+source. It was deprecated as a data source in provider 0.7, so older examples showing
+`data` are out of date.
 
 ## 5. Apply and verify
+
+Everything here runs on the ops host, from your copy of this repo. `terraform.tfvars` is
+your answers file: only `install_image` is required, so paste the installer reference from
+step 1 into it. Every other setting has a working default, with commented lines ready to
+uncomment if your NIC driver, disk, or LAN differ from what maintenance mode showed you.
+
+`tofu init` downloads the provider. `tofu apply` prints a plan of what it will create (the
+machine secrets, a config apply per node, the bootstrap, the kubeconfig) and asks for a
+`yes`, then does the work: it pushes a machine config to each node, waits while they
+install to disk and reboot, and bootstraps etcd on the first one. This is the long step:
+most of it is the nodes installing and rebooting.
 
 ```bash
 cd iac/tofu/cluster
@@ -197,27 +279,47 @@ talosctl -e 192.168.1.110 -n 192.168.1.101 health \
   --control-plane-nodes 192.168.1.101,192.168.1.102,192.168.1.103
 ```
 
-The health check above went through `talosctl` (the Talos CLI, node-level). `kubectl` is the
-Kubernetes-level view:
+The two `tofu output` lines write the credential files: the kubeconfig for `kubectl`, the
+talosconfig for `talosctl`. `chmod 600` keeps them readable by you alone, and the `export`
+line points both tools at them.
+
+The `talosctl health` line asks the cluster to check itself, connecting through the VIP
+(`-e`) and querying one node (`-n`).
+
+> **✅ Verify:** the command runs through its checks and exits cleanly, with etcd healthy
+> on all three nodes.
+
+That check spoke to the Talos API on the nodes, the operating-system view. `kubectl` speaks
+to the Kubernetes API the cluster now serves, the workload view:
 
 ```bash
 kubectl get nodes
 # expect all three nodes, STATUS NotReady
 ```
 
-Nodes sit **`NotReady`** until a CNI (the pod network plugin) is running. That is expected —
-and it is a **timer**: Talos reboots nodes that have had no CNI for about ten minutes. Go
-straight to Cilium, the first install in [03-platform-layer](03-platform-layer.md).
+Nodes sit **`NotReady`** until a CNI is running, and we told Talos not to install one.
+That is expected.
+
+> [!CAUTION]
+> It is also a **timer**. Talos reboots nodes that have had no CNI for about ten minutes.
+> Go straight to Cilium, the first install in [03-platform-layer](03-platform-layer.md).
 
 ## 6. Registry mirrors (optional, but note how they work)
 
-If you run an in-cluster HTTP registry, image pulls are done by **containerd in the host
-network namespace**, which resolves via Talos `hostDNS` on `127.0.0.53` — not CoreDNS. A
-bare `myregistry.registry.svc.cluster.local:5000/...` reference can therefore never
-resolve, and containerd defaults to HTTPS while the registry is HTTP-only.
+Skip this unless you plan to run your own image registry inside the cluster. The mechanism
+is worth a skim anyway, because the failure is baffling the first time you hit it.
 
-Both are solved by a mirror entry in `common.yaml`. Talos matches the key **literally**
-against the image reference and never resolves it:
+The trap: pods do not pull their own images. **containerd**, the container runtime on each
+host, does the pulling, and it runs in the host's own network, not the pod network. There
+it resolves names through Talos `hostDNS` on `127.0.0.53`, not through CoreDNS (the DNS
+server that answers for names inside the cluster). So a cluster-internal name like
+`myregistry.registry.svc.cluster.local:5000/...` can never resolve, and on top of that
+containerd defaults to HTTPS while the registry speaks only HTTP.
+
+A mirror entry in `common.yaml` solves both. It tells containerd that images whose
+reference starts with this name come from this address instead. Talos matches the key
+**literally** against the image reference and never resolves it as a name, and the
+endpoint states `http://` outright:
 
 ```yaml
 machine:
@@ -228,7 +330,8 @@ machine:
           - http://192.168.1.202:5000     # a node-routable LoadBalancer IP
 ```
 
-Applied with `talosctl patch machineconfig` — no reboot required.
+Apply it with `talosctl patch machineconfig`, which edits the machine config on a live
+node. No reboot required.
 
 ## Gotchas checklist
 

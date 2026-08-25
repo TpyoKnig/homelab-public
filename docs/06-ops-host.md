@@ -10,33 +10,66 @@ Before this: a cluster you can only inspect from inside itself, with the rebuild
 on your laptop. After this: a Pi that watches the cluster from outside and serves the
 git repo that recreates it.
 
-An out-of-cluster box doing three jobs the cluster should not do for itself:
+Three jobs, all kept off the cluster on purpose:
 
-1. **Observability** — Prometheus (metrics), Loki (logs), Tempo (traces) and Grafana
-   (the UI over all three), scraping the cluster from outside so they survive a
-   total-cluster incident or a `tofu destroy`. Don't monitor a thing with itself. (A
-   scrape is a pull: Prometheus fetches each target's `/metrics` URL on a timer.)
-2. **Git** — Forgejo behind its own Cloudflare tunnel, so the source of truth outlives
-   the cluster.
-3. **Management** — `talosctl`, `kubectl`, `helm`, `tofu`, the Terraform state, and the
-   backup crons.
+1. **Observability**, the tools that watch the cluster. Prometheus collects numbers: on
+   a timer it pulls a `/metrics` page from each thing it watches (that pull is called a
+   scrape) and stores the history. Loki does the same for log lines, and Tempo for
+   traces, the timed records of single requests. Grafana is the web UI that draws all
+   three. They live on the Pi for one reason: when the cluster is down, or a
+   `tofu destroy` has erased it, the graphs must still be up. Don't monitor a thing
+   with itself.
+2. **Git.** Forgejo is a self-hosted git server with a GitHub-style web UI. It sits
+   behind its own Cloudflare tunnel and holds the repo the cluster is rebuilt from, so
+   the source of truth outlives the cluster.
+3. **Management.** The command-line tools (`talosctl`, `kubectl`, `helm`, `tofu`), the
+   Terraform state, and the backup crons.
 
-It is explicitly **not** a Kubernetes node. Do not `talosctl apply-config` to it.
+```mermaid
+flowchart LR
+    subgraph k8s["Talos cluster"]
+        ne["node-exporter"]
+        ksm["kube-state-metrics"]
+        kubelet["kubelet + cadvisor"]
+        alloy["Grafana Alloy<br>DaemonSet"]
+    end
+    subgraph pi["pi-ops, off-cluster"]
+        prom["Prometheus<br>30 day retention"]
+        loki["Loki<br>7 to 30 days"]
+        tempo["Tempo<br>14 days"]
+        graf["Grafana :3000"]
+    end
+    ne -.->|"pulled by Prometheus through<br>the API-server proxy"| prom
+    ksm -.-> prom
+    kubelet -.-> prom
+    alloy -->|"pushes logs"| loki
+    alloy -->|"pushes traces, OTLP"| tempo
+    prom --> graf
+    loki --> graf
+    tempo --> graf
+```
 
-Rebuild from a fresh Debian install with
-[`scripts/bootstrap-ops-host.sh`](../scripts/bootstrap-ops-host.sh) — idempotent, safe to
-re-run.
+Dotted arrows are pulled, solid arrows are pushed. Nothing in the cluster is required for
+any of it to keep working.
+
+> [!CAUTION]
+> The ops host is explicitly **not** a Kubernetes node. Do not `talosctl apply-config` to
+> it.
+
+Rebuild the whole host from a fresh Debian install with
+[`scripts/bootstrap-ops-host.sh`](../scripts/bootstrap-ops-host.sh). The script is
+idempotent: re-running it is safe and changes nothing that is already correct.
 
 ## Hardware
 
 | Item | Notes |
 | --- | --- |
 | Raspberry Pi 5 8 GB | arm64, PCIe on the underside |
-| NVMe HAT + ~256 GB NVMe | Or a USB 3 SSD. **Do not run this from an SD card** — Prometheus writes will kill it in months |
+| NVMe HAT + ~256 GB NVMe | Or a USB 3 SSD. **Do not run this from an SD card.** Prometheus writes will kill it in months |
 | PoE+ HAT or USB-C 5 A PSU | |
 | Case with a fan | The Pi 5 throttles under sustained load without active cooling |
 
-IP `192.168.1.100`, reserved.
+The Pi's address is `192.168.1.100`, reserved in the router so it never changes.
 
 ## Layout
 
@@ -53,10 +86,15 @@ IP `192.168.1.100`, reserved.
 /mnt/nas/           NFS mount of the NAS backup share
 ```
 
-`/mnt/data/*` bind mounts mean the storage backend (SD card now, NVMe later) is a mount
-decision, not a YAML change.
+Every service keeps its data under `/mnt/data` through bind mounts, which map a host
+directory straight into a container. Swap the disk behind `/mnt/data` (SD card now, NVMe
+later) and nothing in any YAML file changes.
 
 ## Observability stack
+
+One Docker Compose file on the Pi runs the whole stack: four containers that start and
+stop together, which is all a compose stack is. If you have written a `compose.yaml` at
+home, nothing here will surprise you.
 
 ```yaml
 # /opt/obs/compose.yaml
@@ -86,7 +124,7 @@ services:
     volumes:
       - ./loki-config.yaml:/etc/loki/config.yaml:ro
       - /mnt/data/loki:/loki
-    ports: ["3100:3100"]        # LAN-reachable — in-cluster Alloy pushes here
+    ports: ["3100:3100"]        # LAN-reachable, in-cluster Alloy pushes here
     restart: unless-stopped
 
   tempo:
@@ -107,40 +145,48 @@ services:
     restart: unless-stopped
 ```
 
-Chown the bind mounts to the container UIDs above (65534, 10001, 472) or nothing starts.
+> [!IMPORTANT]
+> Each container runs as the numeric user on its `user:` line, and it can only write to a
+> directory that user owns. Chown the bind-mounted directories to those UIDs (65534,
+> 10001, 472) or nothing starts.
 
 ### Scraping the stack itself
 
-`bootstrap-ops-host.sh` sets up `obs-loki` and `obs-grafana`, the two stack services it
-creates. Tempo is added later (compose block above), so **its scrape job has to be added
-by hand** — the bootstrap deliberately does not ship a job for a service that does not
-exist yet:
+Prometheus watches its housemates too. `bootstrap-ops-host.sh` sets up the `obs-loki` and
+`obs-grafana` scrape jobs for the two stack services it creates. Tempo is added later
+(the compose block above), so **its scrape job has to be added by hand**. The bootstrap
+deliberately does not ship a job for a service that does not exist yet:
 
 ```yaml
-# /opt/obs/prometheus.yml — add alongside obs-loki / obs-grafana
+# /opt/obs/prometheus.yml, add alongside obs-loki and obs-grafana
 - job_name: obs-tempo
   static_configs: [{ targets: ['tempo:3200'] }]
 ```
 
-Worth the two lines. Tempo's metrics-generator is what turns spans (the timed steps that
-make up a trace) into the `traces_spanmetrics_*` series the node-latency dashboard reads,
-so if it stalls the dashboard goes flat with nothing else to warn you. The two to alert on:
+Worth the two lines. A span is one timed step inside a trace. Tempo's metrics-generator
+is the part of Tempo that turns spans into the `traces_spanmetrics_*` series the
+node-latency dashboard reads, so if it stalls the dashboard goes flat with nothing else
+to warn you. The two to alert on:
 
 | Metric | Means |
 |---|---|
 | `tempo_metrics_generator_registry_active_series` | pinned at 0 → generation has stopped |
 | `tempo_metrics_generator_spans_discarded_total` | spans arriving but being dropped |
 
-Reload without a restart: `curl -X POST http://localhost:9090/-/reload`. That needs
-`--web.enable-lifecycle` on Prometheus (it is in the compose block above); without it
-the endpoint answers 403 `Lifecycle API is not enabled.`
+After editing `prometheus.yml`, run `curl -X POST http://localhost:9090/-/reload` on the
+Pi to make Prometheus re-read the file without a restart. That needs the
+`--web.enable-lifecycle` flag, which is already in the compose block above. Without the
+flag, the Prometheus version pinned there answers 403 `Lifecycle API is not enabled.`
 
 ### Scraping the cluster from outside
 
-Discovery via the Kubernetes API, scraping through the **API-server proxy** (the API
-server will forward an HTTP request to any pod, so Prometheus only ever needs a route to
-one address). One bearer token, no per-service LoadBalancer, and new pods are covered
-automatically.
+The Pi has no route into the pod network, so Prometheus goes through the front door
+instead. It asks the Kubernetes API server, the address every cluster request goes
+through, for the list of pods to watch (discovery). The scrapes then travel through the
+**API-server proxy**: the API server will forward an HTTP request to any pod, so
+Prometheus only ever needs a route to that one address. One bearer token (the credential
+sent with every request) covers everything, there is no per-service LoadBalancer to
+build, and new pods are covered automatically.
 
 ```yaml
 # /opt/obs/prometheus.yml (one job; the others follow the same shape)
@@ -169,13 +215,17 @@ automatically.
       replacement: /api/v1/namespaces/$1/pods/$2:$3/proxy/metrics
 ```
 
-Same pattern for node-exporter, app `/metrics` endpoints, and — with `role: node` — the
-kubelet's `/metrics` and `/metrics/cadvisor` (the kubelet is the per-node agent that
-actually runs your pods, and cadvisor is its built-in container stats), which is what
-feeds per-pod CPU and memory panels.
+The `relabel_configs` block does the interesting work: it picks out the right pods,
+rewrites their addresses into API-server proxy URLs, and stamps every metric with
+`cluster=talos-lab` for the dashboards later. The same shape repeats for node-exporter
+(described below), for app `/metrics` endpoints, and, with `role: node`, for the
+kubelet's `/metrics` and `/metrics/cadvisor`. The kubelet is the agent on every node
+that actually runs your pods, and cadvisor is its built-in container stats page. That
+cadvisor job is what feeds the per-pod CPU and memory panels.
 
-Cluster side, the RBAC it needs (RBAC is Kubernetes's permission system, and this grants
-the token read-only access to exactly what the scrapes touch):
+Now the cluster side. RBAC is Kubernetes's permission system: rules for who may do what,
+written as objects you apply like anything else. This one grants the Pi's token
+read-only access to exactly what the scrapes touch, and nothing else:
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -190,34 +240,50 @@ rules:
     verbs: [get]
 ```
 
-plus a ServiceAccount, a binding, and a long-lived token Secret annotated
-`kubernetes.io/service-account.name`. Copy the token and CA to the Pi and mount them into
-the Prometheus container.
+A role does nothing until something holds it. Add a ServiceAccount (an account for
+software rather than a person), a binding that ties it to the role above, and a
+long-lived token Secret annotated `kubernetes.io/service-account.name`. That token is
+what Prometheus presents on every scrape. Copy the token and the cluster CA certificate
+to the Pi and mount them into the Prometheus container at the paths the scrape config
+reads: `/etc/prometheus/k8s-token` and `/etc/prometheus/k8s-ca.crt`.
 
-**The cluster runs only exporters** — `node-exporter` DaemonSet and `kube-state-metrics`,
-plain Helm charts, no operator, no CRDs. An exporter is a small service that publishes
-something else's stats as `/metrics` for Prometheus to pull (node-exporter: hardware and
-OS, kube-state-metrics: the state of Kubernetes objects), and a DaemonSet runs one copy
-of a pod on every node. The `monitoring` namespace needs
-`pod-security.kubernetes.io/enforce=privileged` (Pod Security Admission, the namespace
-gate that otherwise rejects pods asking for host access), since node-exporter wants
-hostPID and hostNetwork.
+**The cluster itself runs only exporters.** An exporter is a small service that
+publishes something else's stats as a `/metrics` page for Prometheus to pull. There are
+two, both plain Helm charts with no operator and no CRDs to learn: `node-exporter`
+reports each node's hardware and OS numbers, and `kube-state-metrics` reports the state
+of Kubernetes objects (how many replicas a Deployment wants versus has, and so on).
+node-exporter runs as a DaemonSet, the Kubernetes shape that puts one copy of a pod on
+every node.
+
+One gate to open first: node-exporter asks for hostPID and hostNetwork, host access that
+namespaces block by default through Pod Security Admission. Label the `monitoring`
+namespace `pod-security.kubernetes.io/enforce=privileged` or the pods are rejected.
 
 ### Verify
 
-From the Pi, with the cluster jobs in `prometheus.yml` and the config reloaded:
+On the Pi, with the cluster jobs in `prometheus.yml` and the config reloaded, ask
+Prometheus for the health of everything it scrapes:
 
 ```bash
 curl -s http://localhost:9090/api/v1/targets | grep -o '"health":"[^"]*"' | sort | uniq -c
 ```
 
-Every line should read `up`. A `down` target is one Prometheus can discover but not
-scrape: drop the `grep` for the full JSON, which names the failing job and the error.
+The command fetches Prometheus's target list and counts the health values.
 
-### Logs — Grafana Alloy → Loki
+> **✅ Verify:** every line reads `up`. A `down` target is one Prometheus can discover but
+> not scrape. To see why, drop the `grep` and read the full JSON, which names the failing
+> job and the error.
 
-A `grafana/alloy` DaemonSet in the cluster tails `/var/log/pods/**` and pushes to the Pi.
-(Alloy rather than promtail, which is EOL.)
+### Logs: Grafana Alloy to Loki
+
+Logs need an agent inside the cluster, because the log files live on the nodes. Grafana
+Alloy is that agent, Grafana's collector for logs and traces. A `grafana/alloy`
+DaemonSet tails every file under `/var/log/pods/**` and pushes the lines to Loki on the
+Pi. (Alloy rather than promtail, its predecessor, which is EOL.)
+
+The pipeline below is written in Alloy's River config language and reads top to bottom:
+find the pods, label them, read their logs, drop one noisy Longhorn message, ship the
+rest to the Pi.
 
 ```
 discovery.kubernetes "pods" { role = "pod" }
@@ -246,84 +312,95 @@ loki.write "pi" {
 }
 ```
 
-Alloy also needs the `privileged` PSA label for the `/var/log/pods` host mount.
+Alloy's namespace also needs the `privileged` Pod Security label, this time because the
+pods mount `/var/log/pods` from the host.
 
-> **River syntax gotcha:** block attributes must be newline-separated.
+> [!WARNING]
+> **River syntax gotcha.** Block attributes must be newline-separated.
 > `rule { source_labels = [...] target_label = "x" }` is a syntax error. Worse, the
-> config-reloader fails **silently** — Alloy keeps running the last good config, so a
+> config-reloader fails **silently**. Alloy keeps running the last good config, so a
 > broken `helm upgrade` looks successful.
 
-### Traces — Alloy OTLP receiver → Tempo
+### Traces: Alloy OTLP receiver to Tempo
 
-The same Alloy DaemonSet doubles as the in-cluster OTLP collector (OTLP is the
-OpenTelemetry protocol, the standard wire format for traces): `otelcol.receiver.otlp`
-on `0.0.0.0:4318` and `:4317`, batched, exported to the Pi's Tempo. A dedicated
-`Service/alloy-otlp` (ClusterIP, both ports) gives workloads a stable DNS name.
+Traces travel the same road. OTLP is the OpenTelemetry protocol, the standard wire
+format apps use to send traces. The same Alloy DaemonSet listens for it
+(`otelcol.receiver.otlp` on `0.0.0.0:4318` and `:4317`), batches what arrives, and
+exports it to Tempo on the Pi. A dedicated `Service/alloy-otlp` (ClusterIP, both ports)
+gives workloads one stable DNS name to send to.
 
-n8n emits one span per workflow execution and one per node, so **an idle instance
-produces no spans** — verify the pipeline with a real run or a synthetic OTLP push, not
-by waiting.
+> [!NOTE]
+> n8n emits one span per workflow execution and one per node (a step in the workflow, not
+> a cluster machine), so **an idle instance produces no spans**. Verify the pipeline with
+> a real workflow run or a synthetic OTLP push, not by waiting.
 
-Wire the Grafana Tempo datasource with `tracesToLogsV2` (span → matching Loki lines by
-`service.name`) and `tracesToMetrics`.
+A datasource is Grafana's connection to one backend it can query. Wire the Tempo
+datasource with `tracesToLogsV2`, which jumps from a span to the Loki log lines sharing
+its `service.name`, and with `tracesToMetrics`.
 
 ### Dashboards and datasources
 
-Provision both **from files**, not the UI:
+Grafana can be configured two ways: click things together in the UI, or provision them,
+meaning Grafana reads its setup from files on disk at startup. Provision both dashboards
+and datasources **from files**, not the UI:
 [`iac/platform/grafana-datasources.yaml`](../iac/platform/grafana-datasources.yaml) and
 [`iac/platform/grafana-dashboards.yaml`](../iac/platform/grafana-dashboards.yaml), mounted
 under `/etc/grafana/provisioning/`. That is the difference between an observability stack
 you can rebuild and one you have to remember.
 
+> [!NOTE]
 > Partly retrofitted. The dashboards are now exported to files and shipped here, but the
-> lab's own Grafana still has its **datasources** clicked in — they carry random UIDs like
+> lab's own Grafana still has its **datasources** clicked in. They carry random UIDs like
 > `cft4er82n82yod` rather than the stable ones `grafana-datasources.yaml` declares, which
 > is exactly the drift that makes a raw dashboard export unusable elsewhere. So the
 > datasource file here is still the fix rather than a mirror. If you are starting fresh,
-> start provisioned; it costs nothing on day one and is tedious to retrofit.
+> start provisioned. It costs nothing on day one and is tedious to retrofit.
 
 Four datasources: **Prometheus**, **Loki**, **Tempo** (with `tracesToLogsV2` so a span
-jumps to its log lines), and **n8n-postgres** — a direct read used by the workflow
-analytics dashboard, which queries n8n's schema rather than Prometheus. That last one
-needs the cluster's Postgres reachable on the LAN; see
+jumps to its log lines), and **n8n-postgres**, a direct connection to n8n's own database
+used by the workflow analytics dashboard, which reads n8n's tables rather than
+Prometheus. That last one needs the cluster's Postgres reachable on the LAN. See
 [`iac/platform/cnpg-lan-service.yaml`](../iac/platform/cnpg-lan-service.yaml).
 
-| ID | Dashboard (as titled in Grafana) | Reads from |
-| --- | --- | --- |
-| — | n8n on Talos — *pick namespace/instance* | Prometheus + Loki — the landing page |
-| 24474 | n8n System Health Overview — *pick instance* | Prometheus — Node.js heap, GC, event loop |
-| 24475 | n8n Workflow & Execution Analytics | Postgres — success rates, throughput, per-workflow trends. Reports on whichever instance `n8n-postgres` points at |
-| 1860 | Node Exporter Full | Prometheus — per-node CPU/mem/disk/net/temps |
-| 15757 | Kubernetes / Views / Global | Prometheus — namespaces, workloads, pressure |
-| 15759 | Kubernetes / Views / Nodes | Prometheus — allocatable vs allocated |
-| 15760 | Kubernetes / Views / Pods | Prometheus — restarts, throttling, OOMs |
+| ID | Dashboard (as titled in Grafana) | Reads from | Shows |
+| --- | --- | --- | --- |
+| none | n8n on Talos, *pick namespace/instance* | Prometheus + Loki | The landing page |
+| 24474 | n8n System Health Overview, *pick instance* | Prometheus | Node.js heap, GC, event loop |
+| 24475 | n8n Workflow & Execution Analytics | Postgres | Success rates, throughput, per-workflow trends. Reports on whichever instance `n8n-postgres` points at |
+| 1860 | Node Exporter Full | Prometheus | Per-node CPU, memory, disk, network, temps |
+| 15757 | Kubernetes / Views / Global | Prometheus | Namespaces, workloads, pressure |
+| 15759 | Kubernetes / Views / Nodes | Prometheus | Allocatable vs allocated |
+| 15760 | Kubernetes / Views / Pods | Prometheus | Restarts, throttling, OOMs |
 
-All seven are vendored at
-[`iac/platform/dashboards/`](../iac/platform/dashboards/) — copy the directory into the
-provisioning path and they load within 30 seconds:
+All seven are vendored (committed to this repo) at
+[`iac/platform/dashboards/`](../iac/platform/dashboards/). On the Pi, copy them into the
+provisioning path and Grafana loads them within 30 seconds:
 
 ```bash
 cp iac/platform/dashboards/*.json /mnt/data/grafana/dashboards/
 ```
 
-Their datasource UIDs were rewritten to the stable ones
-`grafana-datasources.yaml` provisions (`prometheus`, `loki`, `tempo`,
-`n8n-postgres`). A UI-created datasource gets a random UID like `cft4er82n82yod`, and an
-export bakes it into every panel, so a raw export is useless on any other machine: the
-dashboard loads and every panel reads *Datasource not found*. Attribution and the full
-mapping are in [`iac/platform/dashboards/README.md`](../iac/platform/dashboards/README.md).
+Every panel finds its datasource by UID, an ID string. A UI-created datasource gets a
+random UID like `cft4er82n82yod`, an export bakes that UID into every panel, and so a
+raw export is useless on any other machine: the dashboard loads and every panel reads
+*Datasource not found*. The vendored copies had their UIDs rewritten to the stable ones
+`grafana-datasources.yaml` provisions (`prometheus`, `loki`, `tempo`, `n8n-postgres`).
+Attribution and the full mapping are in
+[`iac/platform/dashboards/README.md`](../iac/platform/dashboards/README.md).
 
-**Put the required template variable in the dashboard title.** The `— pick
-namespace/instance` suffixes above are deliberate. Several of these render blank until you
-select a value, and a blank dashboard is indistinguishable from a broken one at a glance —
-particularly six months later, or for anyone who is not you. Naming the variable in the
-title turns "this is broken" into "set the dropdown". Where a dashboard is pinned to one
-instance, put *that* in the title instead, so a second n8n deployment can't be misread as
-the first.
+> [!TIP]
+> **Put the required template variable in the dashboard title.** A template variable is a
+> dropdown at the top of a dashboard that every panel filters on. The *pick
+> namespace/instance* suffixes above are deliberate. Several of these dashboards render
+> blank until you select a value, and at a glance a blank dashboard is indistinguishable
+> from a broken one, particularly six months later, or for anyone who is not you. Naming
+> the variable in the title turns "this is broken" into "set the dropdown". Where a
+> dashboard is pinned to one instance, put *that* in the title instead, so a second n8n
+> deployment cannot be misread as the first.
 
 The first row is the hand-built landing page, the only original in the set:
 [`iac/platform/dashboards/n8n-on-talos.json`](../iac/platform/dashboards/n8n-on-talos.json).
-Twelve panels — pod counts per role, queue depth, cache hit rate, node CPU and memory,
+Twelve panels: pod counts per role, queue depth, cache hit rate, node CPU and memory,
 pod count by namespace, pods not Running, plus two logs panels (live n8n main, and a
 cluster-wide error/warning filter).
 
@@ -336,16 +413,17 @@ For your own dashboards, either build them that way or export with **Share → E
 "Export for sharing externally"**, which rewrites the hardcoded UIDs into `__inputs`
 prompts at import time.
 
-**Two things make these work, and both fail quietly:**
-
-- **The `cluster` label.** Every `157xx` dashboard filters on `{cluster="$cluster"}` and
-  renders completely empty without it. The scrape config injects it with a static relabel.
-  Nothing warns you — the panels just say "No data".
-- **The kubelet cadvisor job.** Pod-level CPU and memory panels read `container_*` and
-  `machine_*`, which come from `/metrics/cadvisor` on the kubelet — not from node-exporter
-  and not from kube-state-metrics. Miss that scrape job and the dashboard loads, most
-  panels populate, and only the per-pod ones are blank, which reads as a broken dashboard
-  rather than a missing target.
+> [!WARNING]
+> **Two things make these work, and both fail quietly:**
+>
+> - **The `cluster` label.** Every `157xx` dashboard filters on `{cluster="$cluster"}` and
+>   renders completely empty without it. The scrape config injects it with a static
+>   relabel. Nothing warns you: the panels read "No data" and that is all.
+> - **The kubelet cadvisor job.** Pod-level CPU and memory panels read `container_*` and
+>   `machine_*`, which come from `/metrics/cadvisor` on the kubelet, not from node-exporter
+>   and not from kube-state-metrics. Miss that scrape job and the dashboard loads, most
+>   panels populate, and only the per-pod ones are blank, which reads as a broken dashboard
+>   rather than a missing target.
 
 ### Retention
 
@@ -359,18 +437,20 @@ configures it somewhere different:
 | Loki (ingress, app namespaces) | 30 d | `limits_config.retention_stream` |
 | Tempo | 14 d | `compactor.compaction.block_retention` |
 
-Loki's default is **never expire**. Set this on day one, not after the disk fills.
+> [!WARNING]
+> Loki's default is **never expire**. Set this on day one, not after the disk fills.
 
 ## Prebuilt Explore queries
 
-Dashboards cover what you watch continuously. Explore (Grafana's ad-hoc query view) is
-for the follow-up question, and by default it opens empty, so everyone retypes TraceQL
-(Tempo's trace query language) from memory.
+Dashboards cover what you watch continuously. Explore is Grafana's blank-page query
+view, the place for the one-off follow-up question. By default it opens empty, so
+everyone ends up retyping TraceQL (Tempo's trace query language) from memory.
 
-Grafana 11.3 has no shareable query library — that arrived in later releases. What it
-does have is per-user query history with a starred flag and an API to write to it, which
-is enough. [`scripts/seed-explore-queries.py`](../scripts/seed-explore-queries.py) seeds
-14 labelled, starred queries across Prometheus, Tempo and Loki:
+As of Grafana 11.3 there is no shareable query library (that arrived in later releases).
+What it does have is per-user query history with a starred flag and an API to write to
+it, which is enough. [`scripts/seed-explore-queries.py`](../scripts/seed-explore-queries.py)
+seeds 14 labelled, starred queries across Prometheus, Tempo and Loki. Run it with
+Grafana's admin password (the one in `/opt/obs/.env`) so it can log in:
 
 ```bash
 GF_PASS="$GF_SECURITY_ADMIN_PASSWORD" ./scripts/seed-explore-queries.py
@@ -378,16 +458,25 @@ GF_PASS="$GF_SECURITY_ADMIN_PASSWORD" ./scripts/seed-explore-queries.py
 ```
 
 It looks datasources up by **name**, not UID, so it works against a Grafana whose
-datasources were created through the UI and carry random UIDs. It is idempotent: entries
-are matched on their label, and a label that already exists is PATCHed in place rather
-than recreated — so editing a query in the script does reach the entry you see in
-Explore, and the entry keeps its uid. `--dry-run` prints what it would do.
+datasources were created through the UI and carry random UIDs. It is also idempotent:
+entries are matched on their label, and a label that already exists is PATCHed in place
+rather than recreated. Editing a query in the script therefore reaches the entry you see
+in Explore, and the entry keeps its uid. `--dry-run` prints what it would do without
+changing anything.
 
-The one real limitation: **query history is per user.** Seeding as `admin` gives the
-queries to `admin` only. On a single-operator box that is a non-issue; with a team, run
-it per login or accept it as an admin convenience.
+> [!NOTE]
+> The one real limitation: **query history is per user.** Seeding as `admin` gives the
+> queries to `admin` only. On a single-operator box that is a non-issue. With a team, run
+> it per login or accept it as an admin convenience.
 
 ## Forgejo
+
+The git stack is a second compose file on the Pi, two containers: Forgejo itself, and
+cloudflared, which keeps a Cloudflare tunnel open. The tunnel is an outbound connection
+from the Pi to Cloudflare that carries `https://git.example.com/` traffic back in, so no
+port on your router is ever opened. Worth noticing in the file: the database is SQLite
+(one file, no database server to run) and registration is disabled, so the public URL
+has no sign-up page.
 
 ```yaml
 # /opt/git/compose.yaml
@@ -414,66 +503,86 @@ services:
     depends_on: [forgejo]
 ```
 
-Argo pulls over the LAN URL `http://192.168.1.100:3001/<user>/homelab-gitops.git`; humans
-use `https://git.example.com/`.
+Argo pulls over the LAN URL `http://192.168.1.100:3001/<user>/homelab-gitops.git`.
+Humans use `https://git.example.com/`.
 
-**`webhook.ALLOWED_HOST_LIST` defaults to `external`, which blocks every private IP.** A
-webhook aimed at a LAN address is refused before the request leaves the container, with
-`webhook can only call allowed HTTP servers` in Forgejo's log and *nothing at all* in the
-receiver's. Delivery is marked failed and **is not retried** — fixing the allowlist
-replays nothing, so re-trigger the event.
+A webhook is an HTTP call Forgejo makes to another system when something happens, a push
+for example.
+
+> [!WARNING]
+> **`webhook.ALLOWED_HOST_LIST` defaults to `external`, which blocks every private IP.** A
+> webhook aimed at a LAN address is refused before the request leaves the container, with
+> `webhook can only call allowed HTTP servers` in Forgejo's log and *nothing at all* in
+> the receiver's. Delivery is marked failed and **is not retried**. Fixing the allowlist
+> replays nothing, so re-trigger the event yourself.
 
 ### Actions runner
 
-`data.forgejo.org/forgejo/runner:13.0.0`, in the same compose stack, labels mapped to
-`catthehacker/ubuntu:act-latest` (which publishes arm64 — required on a Pi).
+Forgejo Actions is Forgejo's CI, driven by workflow files in the GitHub Actions style. A
+runner is the worker that picks up queued jobs and executes them, and without one
+nothing runs. This one is `data.forgejo.org/forgejo/runner:13.0.0` in the same compose
+stack, its labels (the mapping from a workflow's `runs-on:` name to a job image) pointed
+at `catthehacker/ubuntu:act-latest`, which publishes arm64, required on a Pi. The log
+lines quoted below are what runner 13.0.0 prints.
 
 - Register with a **shared secret**, not a registration token:
   `forgejo forgejo-cli actions register --secret <s> --scope <user> --name pi-ops-runner`.
-  Idempotent — re-running updates rather than duplicates.
+  Idempotent: re-running updates the existing runner rather than duplicating it.
 - The daemon needs `/data/.runner` or it exits with `0 server connections configured`.
   Run `forgejo-runner create-runner-file` before `daemon`.
-- Needs the **docker group**, not just the socket mount: `user: '1000:1000'` plus
-  `group_add: ['<docker-gid>']`. Jobs run as sibling containers on the host daemon, which
-  is root-equivalent access to this host — acceptable only for private repos.
-- **Containers on this host cannot reach the host's own LAN IP.** Hairpinning back to
-  `192.168.1.100:3001` from inside a container times out even though the same URL works
-  from the host shell and from the cluster. Use the compose DNS name
+- Needs the **docker group**, not only the socket mount: `user: '1000:1000'` plus
+  `group_add: ['<docker-gid>']`. Jobs run as sibling containers, started on the Pi's own
+  Docker daemon next to the runner, which is root-equivalent access to this host.
+  Acceptable only for private repos.
+- **Containers on this host cannot reach the host's own LAN IP.** A request from inside a container
+  back to `192.168.1.100:3001` (a hairpin turn through the host's own IP) times out,
+  even though the same URL works from the host shell and from the cluster. Use the compose DNS name
   (`http://forgejo:3000`) and set the runner's `container.network` to the compose network.
   Symptom if wrong: the daemon logs `Starting runner daemon`, looks fine for 60 s, dies
   with `fail to invoke Declare … context deadline exceeded`, and restart-loops. A healthy
   runner logs `declared successfully` and `[poller] launched`.
-- `DEFAULT_ACTIONS_URL: https://github.com` — Forgejo otherwise resolves `uses:` against
-  `code.forgejo.org`, which mirrors `actions/*` but not third-party actions.
-- **Queued runs are inert without a runner** and the UI just says `Waiting` forever, with
-  no error anywhere.
+- `DEFAULT_ACTIONS_URL: https://github.com` (already in the compose block above).
+  Without it Forgejo resolves the `uses:` lines in workflows against `code.forgejo.org`,
+  which mirrors `actions/*` but not third-party actions.
+- **Queued runs are inert without a runner.** The UI says `Waiting` forever, with no
+  error anywhere.
 - **CI triggers are a load decision on shared hardware.** A full test matrix per commit
-  can queue faster than one Pi drains it; `workflow_dispatch:` is a reasonable answer.
+  can queue faster than one Pi drains it. Manual triggering with `workflow_dispatch:` is
+  a reasonable answer.
 
 ## Backups
+
+Two cron jobs on the Pi (cron is Linux's scheduler: each line is a time pattern, then a
+command). The first snapshots etcd, the cluster's state store, at 02:15 every night. The
+second backs up the Pi itself at 03:30. Both append to logs under `/var/log/`:
 
 ```cron
 15 2 * * * root /opt/lab/cron/etcd-snapshot.sh  >> /var/log/etcd-snapshot.log 2>&1
 30 3 * * * root /opt/lab/cron/pi-selfbackup.sh  >> /var/log/pi-selfbackup.log 2>&1
 ```
 
-See [`scripts/etcd-snapshot.sh`](../scripts/etcd-snapshot.sh). Three things that will
-bite you:
+See [`scripts/etcd-snapshot.sh`](../scripts/etcd-snapshot.sh).
 
-- **Use absolute paths in cron scripts.** Cron's `PATH` lacks `/usr/local/bin`. A bare
-  `talosctl` silently ate nineteen nights of snapshots before anyone read the log.
-- **`rsync -a --no-o --no-g`** — root-squashed NAS exports make plain `rsync -a` die on
-  `chown` with exit 23.
-- **`--delete` is what propagates retention** to the NAS. Drop it and the NAS grows
-  forever. Conversely, never point another system's backup target *inside* a tree that a
-  `--delete` mirror owns.
-- **Back up Grafana's SQLite, and back up every config the stack reads — not just the
+> [!CAUTION]
+> **Use absolute paths in cron scripts.** Cron's `PATH` lacks `/usr/local/bin`. A bare
+> `talosctl` silently ate nineteen nights of snapshots before anyone read the log.
+
+The rest of what will bite you:
+
+- **`rsync -a --no-o --no-g`.** The NAS export is root-squashed (the NAS demotes root to
+  an unprivileged user), so plain `rsync -a`, which tries to `chown` what it copies,
+  dies with exit 23. The two extra flags tell rsync not to copy owner and group.
+- **`--delete` is what propagates retention** to the NAS: rsync removes files from the
+  NAS copy that were removed locally. Drop it and the NAS grows forever. Conversely,
+  never point another system's backup target *inside* a tree that a `--delete` mirror
+  owns, because the mirror will delete it.
+- **Back up Grafana's SQLite, and back up every config the stack reads, not only the
   ones you remember writing.** The self-backup listed `/opt/obs/{.env,prometheus.yml,
-  compose.yaml}` by name, which quietly excluded `tempo.yaml` — the file holding the
-  span-metric dimensions the tracing dashboard is built on — and `loki-config.yaml`.
+  compose.yaml}` by name, which quietly excluded `tempo.yaml` (the file holding the
+  span-metric dimensions the tracing dashboard is built on) and `loki-config.yaml`.
   `/mnt/data/grafana/grafana.db` was missing entirely, and it is the only copy of the
   datasource UIDs every UI-created dashboard binds to, plus Explore's starred queries.
-  Dashboards are re-importable from git; the UIDs they bind to are not.
+  Dashboards are re-importable from git. The UIDs they bind to are not.
 
   Snapshot SQLite properly rather than copying it. Grafana is running, so `cp` can catch
   a torn write mid-transaction:
@@ -482,22 +591,26 @@ bite you:
   sqlite3 /mnt/data/grafana/grafana.db ".backup '/opt/obs/grafana.db.snapshot'"
   ```
 
-  Verify by counting rows in the snapshot, not by checking the file exists —
+  Verify by counting rows in the snapshot, not by checking the file exists:
   `select count(*) from dashboard;` should match what Grafana shows.
 
-Two copies: NAS (copy 1) and local disk (copy 2). Both scripts check `mountpoint -q`
-first and warn to stderr rather than syncing into an empty mount point.
+Two copies: NAS (copy 1) and local disk (copy 2). Both scripts run `mountpoint -q`
+first, which checks the NAS share is actually mounted, and warn to stderr rather than
+syncing into the empty directory under the mount point.
 
-**Still missing here, and worth adding:** a nightly check that the newest Longhorn backup
-is under 36 hours old. Cheapest version is
-`kubectl -n longhorn-system get backups.longhorn.io` and an assertion on
-`.status.backupCreatedAt`. A backup job that stops silently is the same as no backup.
+> [!NOTE]
+> **Still missing here, and worth adding:** a nightly check that the newest Longhorn
+> backup (Longhorn is the cluster's storage layer) is under 36 hours old. Cheapest version
+> is `kubectl -n longhorn-system get backups.longhorn.io` and an assertion on
+> `.status.backupCreatedAt`. A backup job that stops silently is the same as no backup.
 
-Skipped deliberately: a full Alertmanager stack. Grafana's built-in contact points cover
-the lab case; add Alertmanager when there is an actual on-call rotation.
+Skipped deliberately: a full Alertmanager stack (Prometheus's dedicated alert router).
+Grafana's built-in contact points, the where-do-alerts-go setting, cover the lab case.
+Add Alertmanager when there is an actual on-call rotation.
 
 ## Firewall
 
-UFW: deny incoming by default, allow SSH, Grafana (3000), Loki (3100) and node-exporter
-(9100) from the LAN only, plus the Docker bridge range to 9100 so the containerised
-Prometheus can scrape the host exporter.
+UFW, Debian's front end for the firewall, denies incoming traffic by default. Allowed
+in, from the LAN only: SSH, Grafana (3000), Loki (3100) and node-exporter (9100). One
+extra rule lets the Docker bridge range reach 9100, so the containerised Prometheus can
+scrape the node-exporter running on the Pi itself.

@@ -23,8 +23,9 @@ detail. This post is the why, the cost, and the potholes.
 | Port forward or VPN to reach webhooks | Cloudflare tunnel dialing out; no inbound port anywhere |
 | Backup is copying the volume and hoping | etcd snapshots, replicated volumes, a NAS cold copy, and the rebuild path gets exercised by every deploy |
 
-If the left column is doing the job, keep it. The right column is for when you want to own
-the platform too, and it costs less than one mid-range GPU.
+> [!TIP]
+> If the left column is doing the job, keep it. The right column is for when you want to
+> own the platform too, and it costs less than one mid-range GPU.
 
 ## Why bother
 
@@ -60,12 +61,13 @@ you plan to max these boxes: 64 GB only works on later BIOS revisions, so ask be
 ordering it. $672.53 delivered with tax, for three HA nodes and 96 GB of RAM. Less than one
 mid-range GPU.
 
-If you're shopping for this, message the seller. Every used-enterprise-hardware storefront
-is one person with a shelf, and a lot of three is worth a conversation to them. Mine turned
-into a lot more than three: I've gone back to the same store for multiple systems since,
-and my entire extended stack came from him. Ask for the
-RAM you want instead of buying sticks separately, seller-installed upgrades beat the parts
-market by a margin that no longer exists anywhere in 2026.
+> [!TIP]
+> If you're shopping for this, message the seller. Every used-enterprise-hardware
+> storefront is one person with a shelf, and a lot of three is worth a conversation to
+> them. Mine turned into a lot more than three: I've gone back to the same store for
+> multiple systems since, and my entire extended stack came from him. Ask for the RAM you
+> want instead of buying sticks separately, seller-installed upgrades beat the parts
+> market by a margin that no longer exists anywhere in 2026.
 
 What actually matters in the spec is shorter than you'd think. A wired NIC, because the
 control-plane VIP and Cilium's L2 announcements need a real L2 segment and Wi-Fi won't do.
@@ -74,8 +76,9 @@ as Talos (256 GB is tight but fine). And a BIOS that can be told to power back o
 outage, otherwise every power blip is a trip to the closet with a keyboard. vPro is nice.
 I've used it once.
 
-Single NIC, no bonding, no redundant power. That's a lab, and the right move is to accept
-that consciously rather than discover it during an outage.
+> [!NOTE]
+> Single NIC, no bonding, no redundant power. That's a lab, and the right move is to
+> accept that consciously rather than discover it during an outage.
 
 The rest of the list came in over the next three weeks. A UniFi UNAS 4 four-bay NAS at
 $451.76 delivered, two M.2 trays and a pair of Samsung PM9A1 512 GB drives for its cache at
@@ -103,8 +106,11 @@ money, from a stranger with a post history instead of a storefront with a return
 Those work.
 
 There isn't a tidy lesson in that. Recertified-from-a-store was the safe option on paper
-and it's the one that failed. What I'd actually change is testing drives the day they land,
-while the return window is still comfortable, and budgeting the time to do it twice.
+and it's the one that failed.
+
+> [!TIP]
+> What I'd actually change is testing drives the day they land, while the return window is
+> still comfortable, and budgeting the time to do it twice.
 
 ## Day 0, the boring hour that saves a weekend
 
@@ -160,11 +166,12 @@ the machine in the closet is the machine described in git.
 
 Two things to get right at build time.
 
-System extensions have to be in the install image, not just the ISO. `iscsi-tools` and
-`util-linux-tools` are both needed by Longhorn, they get baked into an [Image
-Factory](https://factory.talos.dev/) schematic, and that schematic ID belongs in the
-*install* image reference. Put them only in the boot ISO and they disappear the moment the
-node boots off disk.
+> [!WARNING]
+> System extensions have to be in the install image, not just the ISO. `iscsi-tools` and
+> `util-linux-tools` are both needed by Longhorn, they get baked into an [Image
+> Factory](https://factory.talos.dev/) schematic, and that schematic ID belongs in the
+> *install* image reference. Put them only in the boot ISO and they disappear the moment
+> the node boots off disk.
 
 Disable the CNI and kube-proxy before bootstrap, since Cilium replaces both:
 
@@ -180,7 +187,9 @@ cluster:
 On Talos v1.13 that key is `cluster.proxy.disabled`. Plenty of older examples show
 `cluster.network.proxy.disabled`, which v1.13 silently ignores, and you end up with a
 kube-proxy DaemonSet fighting Cilium over the same job with nothing in any log saying so.
-Both keys have to be right before bootstrap. Changing them afterward is a rebuild.
+
+> [!CAUTION]
+> Both keys have to be right before bootstrap. Changing them afterward is a rebuild.
 
 The cluster itself is an OpenTofu root: secrets, machine configs, apply to three nodes,
 bootstrap exactly one of them, pull kubeconfig. `tofu apply` and go make coffee.
@@ -217,9 +226,10 @@ cluster tunnel  ->  *.example.com      (n8n, searxng, argo)
 pi-ops tunnel   ->  git.example.com    (Forgejo, on the Pi)
 ```
 
-If the cluster is gone, git is still reachable, and git is what I'd rebuild the cluster
-from. One tunnel would have made that circular, and I'd have found out at exactly the wrong
-moment.
+> [!NOTE]
+> If the cluster is gone, git is still reachable, and git is what I'd rebuild the cluster
+> from. One tunnel would have made that circular, and I'd have found out at exactly the
+> wrong moment.
 
 TLS is a real Let's Encrypt cert issued in-cluster over DNS-01, even though Cloudflare
 terminates at the edge. Same `Ingress` works through the tunnel and directly at
@@ -282,15 +292,16 @@ and keeping them in step. The module stands up CloudNativePG and Valkey alongsid
 the whole workload is one `apply`. If you already run Postgres and Redis in your cluster,
 use the chart.
 
-The ingress is split in two, and this is the part I'd have gotten wrong without running
-into it. n8n Community has no SSO, so authentication has to live at the ingress. Except
-webhooks are called by machines that can't authenticate. One hostname can't serve both an
-allowlisted editor and open webhook endpoints, so there are two:
-
-```
-n8n.example.com      editor, IP allowlist at the ingress
-hooks.example.com    webhooks, open, no auth annotations
-```
+> [!IMPORTANT]
+> The ingress is split in two, and this is the part I'd have gotten wrong without running
+> into it. n8n Community has no SSO, so authentication has to live at the ingress. Except
+> webhooks are called by machines that can't authenticate. One hostname can't serve both an
+> allowlisted editor and open webhook endpoints, so there are two:
+>
+> ```
+> n8n.example.com      editor, IP allowlist at the ingress
+> hooks.example.com    webhooks, open, no auth annotations
+> ```
 
 Two Ingress objects, one Service, with `N8N_PROXY_HOPS=2` so n8n sees the real client IP
 through both Cloudflare and nginx.
@@ -328,12 +339,15 @@ N8N_SANDBOX_SERVICE_URL=http://<sandbox-api service>:8080
 N8N_SANDBOX_SERVICE_API_KEY=<one of the service's api-keys values>
 ```
 
-Get the last two names exactly right. n8n doesn't error on an env var it never reads, so a
-misspelled name produces an assistant that loads and can't execute anything, quietly.
+> [!WARNING]
+> Get the last two names exactly right. n8n doesn't error on an env var it never reads, so
+> a misspelled name produces an assistant that loads and can't execute anything, quietly.
 
-SearXNG is self-hosted metasearch and doubles as the assistant's search backend. Worth
-knowing that n8n resolves search providers in a fixed order, and setting a Brave key takes
-SearXNG out of the path entirely without saying so.
+SearXNG is self-hosted metasearch and doubles as the assistant's search backend.
+
+> [!WARNING]
+> Worth knowing that n8n resolves search providers in a fixed order, and setting a Brave
+> key takes SearXNG out of the path entirely without saying so.
 
 PR-Agent does AI code review on every Forgejo PR, which is a good place to explain what
 this is actually like to use.
@@ -442,9 +456,11 @@ Plus the Pi 5 at $80 from Micro Center in early 2025.
 
 The cluster itself was $672.53. Everything else is storage.
 
-Now the honest part: you can't reproduce this at these prices right now. The AI memory
-crunch has been eating consumer DRAM and NAND all year. A 32 GB DDR4 kit that was around
-$50 in early 2025 runs [$250 to $350
+> [!IMPORTANT]
+> Now the honest part: you can't reproduce this at these prices right now.
+
+The AI memory crunch has been eating consumer DRAM and NAND all year. A 32 GB DDR4 kit
+that was around $50 in early 2025 runs [$250 to $350
 today](https://www.tomshardware.com/pc-components/ram/ram-price-index-2026-lowest-price-on-ddr5-and-ddr4-memory-of-all-capacities).
 The Pi 5 is the clearest case. I paid $80 for mine, and [Raspberry Pi has raised prices
 twice since](https://www.raspberrypi.com/news/more-memory-driven-price-rises/), so the same

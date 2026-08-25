@@ -24,9 +24,10 @@ The four hardcoded UIDs here were rewritten to the stable ones that
 | `tempo` | `Tempo` |
 | `n8n-postgres` | `n8n-postgres` |
 
-So use the datasource file alongside these, or create datasources with those
-exact UIDs. If you provision datasources through the UI instead, yours will get
-random UIDs and these dashboards will not find them.
+> [!IMPORTANT]
+> So use the datasource file alongside these, or create datasources with those exact
+> UIDs. If you create datasources through the UI instead, yours will get random UIDs and
+> these dashboards will not find them.
 
 The community dashboards below reference `${datasource}` / `${DS_PROMETHEUS}`
 template variables rather than fixed UIDs, so they were already portable and
@@ -38,12 +39,14 @@ needed no rewriting.
 emit: executions, webhooks, queue, DB pool, scheduler, execution-data I/O, cache
 and per-role process health.
 
-Most of it reports nothing on a default install. `N8N_METRICS=true` enables the
-endpoint, but **19 of the 23 `N8N_METRICS_INCLUDE_*` groups default to false**, so
-the endpoint looks complete while saying nothing about webhooks, the scheduler, the
-DB pool, SSRF blocks or DNS cache. Turning them all on took this instance from 66 to
-127 distinct metric names, for about 1,700 extra series — under 2% of this
-Prometheus.
+> [!WARNING]
+> Most of it reports nothing on a default install. `N8N_METRICS=true` enables the
+> endpoint, but **19 of the 23 `N8N_METRICS_INCLUDE_*` groups default to false**, so the
+> endpoint looks complete while saying nothing about webhooks, the scheduler, the DB pool,
+> SSRF blocks or DNS cache.
+
+Turning them all on took this instance from 66 to 127 distinct metric names, for about
+1,700 extra series, under 2% of this Prometheus.
 
 Two rules are baked into the queries, and getting either wrong produces
 confidently wrong numbers:
@@ -52,7 +55,7 @@ confidently wrong numbers:
   process that ran it. Summing across pods is the correct total.
 - **Shared-state gauges use `max()`.** `n8n_active_workflow_count` is read from the
   database, so *every* pod reports the same value. `sum()` multiplies it by the pod
-  count — and that bites at two replicas, not just at scale.
+  count, and that bites at two replicas, not just at scale.
 
 It uses a `DS_PROMETHEUS` datasource-type variable rather than a fixed UID, so
 unlike the exports described below it binds correctly on any Grafana.
@@ -64,30 +67,37 @@ own metrics, because n8n's own metrics cannot answer the question it asks.
 
 Prometheus stops at the workflow boundary. `n8n_workflow_execution_duration_seconds`
 will tell you an execution took 8 seconds and nothing about where the 8 seconds went,
-and there are **no task-runner metrics at all** — `dist/metrics/prometheus/` holds 23
+and there are **no task-runner metrics at all**. `dist/metrics/prometheus/` holds 23
 metric services and none of them is about runners. So a Code node sitting 7.8 s waiting
 for a Python task runner shows up as an 8 s workflow and nothing more.
 
 n8n does ship the answer, switched off. It has an OpenTelemetry module that emits a
-`node.execute` span per node, and it is **not a licensed feature** — module gating is
+`node.execute` span per node, and it is **not a licensed feature**. Module gating is
 the `licenseFlag` property on the `@BackendModule` decorator, which `log-streaming`,
 `ldap` and `source-control` all carry and `otel` does not. It is already in the module
-registry's `defaultModules`, so it loads on every start; `N8N_OTEL_ENABLED=false` is
+registry's `defaultModules`, so it loads on every start, and `N8N_OTEL_ENABLED=false` is
 the only thing stopping it. It declares `instanceTypes: ['main','worker','webhook']`,
 which matters, because the worker is what actually runs the node.
 
-The chain is: n8n emits spans → Tempo ingests them → Tempo's metrics-generator converts
-them to `traces_spanmetrics_*` and remote-writes to Prometheus → this dashboard queries
-those series. So it needs `../tempo-metrics-generator.yaml` and the `N8N_OTEL_*`
-settings in `docs/07-n8n.md`; without both, its panels are empty.
+```mermaid
+flowchart LR
+    a["n8n emits spans"] --> b["Tempo ingests them"]
+    b --> c["Tempo metrics-generator<br>converts to traces_spanmetrics_*<br>and remote-writes"]
+    c --> d["Prometheus"] --> e["this dashboard"]
+```
 
-**The gotcha worth stealing:** a Code node is `n8n-nodes-base.code` whether it runs on
-the JavaScript runner or the Python one, and n8n puts no language attribute on the span.
-Only the node *name* separates them, which is why `n8n.node.name` is promoted to a metric
-dimension. On this lab that split is 61 ms versus 1,193 ms mean for the same node type —
-the single most useful number on the dashboard, and invisible without that dimension.
+So it needs `../tempo-metrics-generator.yaml` and the `N8N_OTEL_*` settings in
+`docs/07-n8n.md`. Without both, its panels are empty.
 
-Node name is author-controlled and unbounded. Fine at lab scale, wrong at real scale;
+> [!TIP]
+> **The gotcha worth stealing:** a Code node is `n8n-nodes-base.code` whether it runs on
+> the JavaScript runner or the Python one, and n8n puts no language attribute on the span.
+> Only the node *name* separates them, which is why `n8n.node.name` is promoted to a
+> metric dimension. On this lab that split is 61 ms versus 1,193 ms mean for the same node
+> type, the single most useful number on the dashboard and invisible without that
+> dimension.
+
+Node name is author-controlled and unbounded. Fine at lab scale, wrong at real scale, so
 drop it and use TraceQL there.
 
 It carries its own trace panel, so the span waterfall is on the dashboard rather than
@@ -102,7 +112,7 @@ missing:
 | Where | What |
 |---|---|
 | `tempo.yaml` | `remote_write: send_exemplars: true` |
-| Prometheus | `--enable-feature=exemplar-storage` — without it, exemplars are accepted and dropped |
+| Prometheus | `--enable-feature=exemplar-storage`. Without it, exemplars are accepted and dropped |
 | Prometheus datasource | `exemplarTraceIdDestinations` pointing at the Tempo datasource |
 
 Like `n8n-full-observability`, this one uses a `${datasource}` variable rather than a
@@ -118,14 +128,15 @@ values out of Prometheus:
 | `job` / `instance` | `label_values(n8n_version_info, job)` |
 | `namespace` | `label_values(kube_deployment_status_replicas_ready{deployment=~"n8n.*"}, namespace)` |
 
-They were originally custom variables holding one hardcoded option — this lab's
+They were originally custom variables holding one hardcoded option, this lab's
 Prometheus job name (`k8s-n8n`) and namespace (`n8n`). That works nowhere but the
 machine it was exported from, and worse, a dashboard titled *pick instance* whose
 dropdown holds exactly one value tells you nothing. Discovered variables populate
 from whatever you actually named your scrape job.
 
-Note the `job` label is the **Prometheus scrape job**, not the Kubernetes
-namespace. They are unrelated, and a lab can name the job anything.
+> [!NOTE]
+> The `job` label is the **Prometheus scrape job**, not the Kubernetes namespace. They are
+> unrelated, and a lab can name the job anything.
 
 `n8n-workflow-execution-analytics` has no variable at all: it queries n8n's
 Postgres schema directly, so it reports on whichever instance the `n8n-postgres`
@@ -145,34 +156,38 @@ instance.
 | `n8n-on-talos.json` | original |
 | `n8n-full-observability.json` | original |
 
-The six community dashboards remain under their authors' terms; they are
-vendored here for reproducibility, not relicensed. Check the upstream page
-before redistributing them further. Only `n8n-on-talos` is mine.
+> [!IMPORTANT]
+> The six community dashboards remain under their authors' terms. They are vendored here
+> for reproducibility, not relicensed. Check the upstream page before redistributing them
+> further. Only `n8n-on-talos` is mine.
 
 `n8n-on-talos.json` predates the others here and was exported in the portable
-form — it binds through `DS_PROMETHEUS` / `DS_LOKI` datasource-type template
+form. It binds through `DS_PROMETHEUS` and `DS_LOKI` datasource-type template
 variables rather than fixed UIDs, so it needed no rewriting and will bind to
 whatever datasources exist wherever you import it. That is the better shape for
 anything you intend to share.
 
 ## Two things that make the Kubernetes ones work
 
-Both are easy to miss and neither produces an error.
-
-1. **The `cluster` label.** Every 157xx dashboard filters on
-   `{cluster="$cluster"}` and renders completely empty without it. The scrape
-   config injects it with a static relabel — see `docs/06-ops-host.md`. Nothing
-   warns you; the panels just say *No data*.
-
-2. **The kubelet cadvisor job.** Pod-level CPU and memory panels read
-   `container_*` and `machine_*` series, which come from `/metrics/cadvisor` on
-   the kubelet, not from node-exporter or kube-state-metrics. Miss that scrape
-   job and the dashboards load, most panels populate, and only the per-pod ones
-   are blank — which reads as a broken dashboard rather than a missing target.
+> [!WARNING]
+> Both are easy to miss and neither produces an error.
+>
+> 1. **The `cluster` label.** Every 157xx dashboard filters on `{cluster="$cluster"}` and
+>    renders completely empty without it. The scrape config injects it with a static
+>    relabel, see `docs/06-ops-host.md`. Nothing warns you, and the panels just say *No
+>    data*.
+> 2. **The kubelet cadvisor job.** Pod-level CPU and memory panels read `container_*` and
+>    `machine_*` series, which come from `/metrics/cadvisor` on the kubelet, not from
+>    node-exporter or kube-state-metrics. Miss that scrape job and the dashboards load,
+>    most panels populate, and only the per-pod ones are blank, which reads as a broken
+>    dashboard rather than a missing target.
 
 ## Editing
 
-`allowUiUpdates: true` is set, so you can rearrange panels in the UI, but
-changes are lost on the next file reload. The JSON is the source of truth.
+`allowUiUpdates: true` is set, so you can rearrange panels in the UI.
+
+> [!CAUTION]
+> Those UI changes are lost on the next file reload. The JSON is the source of truth.
+
 Export back to it with Share → Export → *Export for sharing externally*, which
 swaps fixed datasource UIDs for `__inputs` variables.
